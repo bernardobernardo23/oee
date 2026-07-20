@@ -1,6 +1,7 @@
 <?php
 session_start();
 require 'conexao.php';
+require_once 'card_op.php';
 
 // Segurança: só usuário corporativo do setor PCP ou ADMIN
 if (!isset($_SESSION['tipo_acesso']) || $_SESSION['tipo_acesso'] !== 'usuario' || !in_array($_SESSION['setor'], ['PCP', 'ADMIN'])) {
@@ -34,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['CONTENT_TYPE']) && 
 
     try {
         $pdo->beginTransaction();
-        $stmt_check = $pdo->prepare("SELECT id FROM ordens_producao WHERE linha_id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO INICIO')");
+        $stmt_check = $pdo->prepare("SELECT id FROM ordens_producao WHERE linha_id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'AGUARDANDO ALMOXARIFADO', 'AGUARDANDO INICIO')");
         $stmt_check->execute([$linha_id]);
         $ids_validos = $stmt_check->fetchAll(PDO::FETCH_COLUMN);
 
@@ -151,24 +152,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
     exit;
 }
 
-function normalizaStatus($str) {
-    $str = strtoupper(trim($str));
-    return str_replace(['Ç','Ã','Á','À','É','Í','Ó','Ú','Â','Ê'], ['C','A','A','A','E','I','O','U','A','E'], $str);
-}
-
 try {
     // Busca dados base
     $linhas_dropdown = $pdo->query("SELECT id, login, fabrica FROM linhas WHERE fabrica > 0 ORDER BY fabrica ASC, login ASC")->fetchAll(PDO::FETCH_ASSOC);
     $fabricas = array_unique(array_column($linhas_dropdown, 'fabrica'));
 
     $status_meta = [
-        'PROGRAMADO'           => ['label' => 'Programado',        'cor' => 'pink'],
-        'AGUARDANDO INICIO'    => ['label' => 'Aguardando Início', 'cor' => 'amber'],
-        'PRODUCAO INICIADA'    => ['label' => 'Em Produção',       'cor' => 'blue'],
-        'PRODUCAO FINALIZADA'  => ['label' => 'Finalizado',        'cor' => 'emerald'],
-        'PAUSADO'              => ['label' => 'Pausado',           'cor' => 'red'],
-        'CANCELADO'            => ['label' => 'Cancelado',         'cor' => 'slate'],
-        'PENDENCIA'            => ['label' => 'Pendência Material','cor' => 'rose']
+        'PROGRAMADO'              => ['label' => 'Programado',            'cor' => 'pink'],
+        'AGUARDANDO FORMULACAO'   => ['label' => 'Aguard. Formulação',    'cor' => 'purple'],
+        'AGUARDANDO ALMOXARIFADO' => ['label' => 'Aguard. Almoxarifado',  'cor' => 'cyan'],
+        'AGUARDANDO INICIO'       => ['label' => 'Aguardando Início',     'cor' => 'amber'],
+        'PRODUCAO INICIADA'       => ['label' => 'Em Produção',           'cor' => 'blue'],
+        'PRODUCAO FINALIZADA'     => ['label' => 'Finalizado',            'cor' => 'emerald'],
+        'PAUSADO'                 => ['label' => 'Pausado',               'cor' => 'red'],
+        'CANCELADO'               => ['label' => 'Cancelado',             'cor' => 'slate'],
+        'PENDENCIA'               => ['label' => 'Pendência Material',    'cor' => 'rose']
+    ];
+
+    // Rótulos amigáveis dos 2 motivos de pendência da Formulação
+    $motivos_pendencia_labels = [
+        'MATERIA_PRIMA_INSUFICIENTE' => 'Matéria-prima insuficiente',
+        'AGUARDANDO_LABORATORIO'     => 'Aguardando liberação do laboratório',
     ];
 
     // Contadores
@@ -183,12 +187,28 @@ try {
     $stmt_fila = $pdo->query("
         SELECT op.id, op.op_sistema, op.data_planejada, op.status, op.observacao_almoxarifado, op.ordem_fila,
                op.linha_id, l.login AS linha_nome, l.fabrica,
-               u.nome_completo AS nome_criador, us.nome_completo AS nome_separador,
-               (SELECT GROUP_CONCAT(CONCAT(p.codigo, ' ', p.descricao) SEPARATOR ' | ') FROM op_produtos op_prod JOIN produtos p ON op_prod.produto_id = p.id WHERE op_prod.op_id = op.id) AS busca_produtos
+               op.data_separacao, op.data_formulacao,
+               u.nome_completo AS nome_criador, us.nome_completo AS nome_separador, uf.nome_completo AS nome_formulador,
+               (SELECT GROUP_CONCAT(CONCAT(p.codigo, ' ', p.descricao) SEPARATOR ' | ') FROM op_produtos op_prod JOIN produtos p ON op_prod.produto_id = p.id WHERE op_prod.op_id = op.id) AS busca_produtos,
+               sa.status AS pendencia_almox_status, sa.observacao AS pendencia_almox_obs, sa.created_at AS pendencia_almox_data,
+               sf.status AS pendencia_form_status, sf.motivo_pendencia AS pendencia_form_motivo, sf.observacao AS pendencia_form_obs, sf.created_at AS pendencia_form_data
         FROM ordens_producao op
         LEFT JOIN linhas l ON op.linha_id = l.id
         LEFT JOIN usuarios u ON op.criador_id = u.id
         LEFT JOIN usuarios us ON op.separador_id = us.id
+        LEFT JOIN usuarios uf ON op.formulador_id = uf.id
+        LEFT JOIN (
+            SELECT sa1.op_id, sa1.status, sa1.observacao, sa1.created_at
+            FROM separacoes_almoxarifado sa1
+            INNER JOIN (SELECT op_id, MAX(id) AS max_id FROM separacoes_almoxarifado GROUP BY op_id) latest
+                ON sa1.id = latest.max_id
+        ) sa ON sa.op_id = op.id
+        LEFT JOIN (
+            SELECT sf1.op_id, sf1.status, sf1.motivo_pendencia, sf1.observacao, sf1.created_at
+            FROM formulacoes sf1
+            INNER JOIN (SELECT op_id, MAX(id) AS max_id FROM formulacoes GROUP BY op_id) latest
+                ON sf1.id = latest.max_id
+        ) sf ON sf.op_id = op.id
         ORDER BY op.data_planejada DESC, op.id DESC
     ");
     $todas_ops = $stmt_fila->fetchAll(PDO::FETCH_ASSOC);
@@ -201,14 +221,14 @@ try {
     }
     unset($op);
 
-    // Separa os dados para a Esteira (apenas Programados e Aguardando)
+    // Separa os dados para a Esteira (fila ainda dentro do duplo gate)
     $ops_esteira = [];
     foreach ($todas_ops as $op) {
-        if (in_array(normalizaStatus($op['status']), ['PROGRAMADO', 'AGUARDANDO INICIO'])) {
+        if (in_array(normalizaStatus($op['status']), ['PROGRAMADO', 'AGUARDANDO FORMULACAO', 'AGUARDANDO ALMOXARIFADO', 'AGUARDANDO INICIO'])) {
             $ops_esteira[$op['linha_id']][] = $op;
         }
     }
-    
+
     // Ordena a esteira pela posição e data
     foreach ($ops_esteira as &$lista_ops) {
         usort($lista_ops, function($a, $b) {
@@ -252,7 +272,7 @@ try {
             </div>
         </div>
 
-        <div class="grid grid-cols-2 md:grid-cols-7 gap-3">
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-3">
             <?php foreach ($status_meta as $nome => $meta): $cor = $meta['cor']; ?>
                 <div class="bg-<?= $cor ?>-100 rounded-lg px-4 py-4 border border-<?= $cor ?>-200 shadow-sm">
                     <div class="flex items-center gap-2">
@@ -349,46 +369,26 @@ try {
             </div>
 
             <div id="view_esteira" class="bg-white rounded-xl shadow-sm border border-slate-200/60 p-5 hidden">
-                <div class="flex justify-between items-center mb-6">
+                <div class="flex justify-between items-center mb-4">
                     <h3 class="text-base font-bold text-slate-800">Esteira de Produção</h3>
                     <span id="status_salvamento" class="text-xs font-semibold text-slate-400"></span>
                 </div>
-                
+
+                <!-- FILTRO LOCAL DA LINHA SELECIONADA (não troca de aba, só filtra os cards da linha atual) -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
+                    <input type="text" id="filtro_esteira_op" oninput="aplicarFiltroEsteira()" placeholder="Buscar por OP nesta linha..." class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100">
+                    <input type="text" id="filtro_esteira_produto" oninput="aplicarFiltroEsteira()" placeholder="Buscar por Produto nesta linha..." class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100">
+                </div>
+                <p class="text-[10px] text-slate-400 font-semibold mb-5 italic" id="dica_filtro_esteira">Filtro aplicado apenas à linha selecionada acima.</p>
+
                 <?php foreach ($linhas_dropdown as $l): $lid = $l['id']; ?>
                     <div id="bloco_esteira_<?= $lid ?>" class="bloco-esteira hidden" data-linha-id="<?= $lid ?>">
                         <?php if (empty($ops_esteira[$lid])): ?>
                             <div class="text-center p-8 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-semibold text-sm">Fila vazia para esta máquina.</div>
                         <?php else: ?>
                             <div class="esteira space-y-3" data-linha-id="<?= $lid ?>">
-                                <?php foreach ($ops_esteira[$lid] as $idx => $op): 
-                                    $st_norm = normalizaStatus($op['status']);
-                                    $cor_st = $status_meta[$st_norm]['cor'] ?? 'slate';
-                                ?>
-                                    <div class="op-card bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-blue-300 flex items-start gap-4" draggable="true" data-op-id="<?= $op['id'] ?>">
-                                        <div class="cursor-grab active:cursor-grabbing flex flex-col items-center gap-1 pt-1 shrink-0 text-slate-400 hover:text-slate-600">
-                                            <div class="w-6 h-6 flex items-center justify-center rounded-full bg-slate-100 font-bold text-[10px] posicao-badge text-slate-600"><?= $idx + 1 ?></div>
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
-                                        </div>
-                                        <div class="flex-1">
-                                            <div class="flex items-center gap-2 mb-2">
-                                                <span class="font-black text-slate-800 text-sm">OP <?= htmlspecialchars($op['op_sistema']) ?></span>
-                                                <span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase border bg-<?= $cor_st ?>-100 text-<?= $cor_st ?>-800 border-<?= $cor_st ?>-200"><?= $status_meta[$st_norm]['label'] ?? $st_norm ?></span>
-                                                <span class="text-[11px] text-slate-400 font-medium">Plan. <?= date('d/m/Y', strtotime($op['data_planejada'])) ?></span>
-                                            </div>
-                                            <div class="space-y-1">
-                                                <?php foreach ($op['produtos'] as $prod): ?>
-                                                    <div class="text-xs bg-slate-50 px-2 py-1 rounded border border-slate-100 flex justify-between">
-                                                        <span><strong class="text-slate-600">[<?= $prod['codigo'] ?>]</strong> <?= $prod['descricao'] ?></span>
-                                                        <span class="font-bold text-slate-700"><?= number_format($prod['quantidade_planejada'], 0, ',', '.') ?> un</span>
-                                                    </div>
-                                                <?php endforeach; ?>
-                                            </div>
-                                        </div>
-                                        <div class="shrink-0 flex flex-col gap-2">
-                                            <button onclick="document.getElementById('modal_editar_op_<?= $op['id'] ?>').showModal()" class="w-8 h-8 rounded-lg border border-slate-200 text-slate-400 hover:text-blue-600 flex items-center justify-center"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg></button>
-                                            <button onclick="document.getElementById('modal_cancelar_op_<?= $op['id'] ?>').showModal()" class="w-8 h-8 rounded-lg border border-slate-200 text-slate-400 hover:text-rose-600 flex items-center justify-center"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
-                                        </div>
-                                    </div>
+                                <?php foreach ($ops_esteira[$lid] as $idx => $op): ?>
+                                    <?php render_op_card($op, $idx, $status_meta, $motivos_pendencia_labels, true, true, false); ?>
                                 <?php endforeach; ?>
                             </div>
                         <?php endif; ?>
@@ -410,37 +410,8 @@ try {
                 </div>
 
                 <div class="space-y-3">
-                    <?php foreach ($todas_ops as $op): 
-                        $st_norm = normalizaStatus($op['status']);
-                        $cor_st = $status_meta[$st_norm]['cor'] ?? 'slate';
-                    ?>
-                        <div class="card-global bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-start gap-4" 
-                             data-op="<?= strtolower($op['op_sistema']) ?>" 
-                             data-prod="<?= strtolower($op['busca_produtos']) ?>" 
-                             data-status="<?= $st_norm ?>">
-                            
-                            <div class="flex-1">
-                                <div class="flex flex-wrap items-center gap-2 mb-2">
-                                    <span class="font-black text-slate-800 text-sm">OP <?= htmlspecialchars($op['op_sistema']) ?></span>
-                                    <span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase border bg-<?= $cor_st ?>-100 text-<?= $cor_st ?>-800 border-<?= $cor_st ?>-200"><?= $status_meta[$st_norm]['label'] ?? $st_norm ?></span>
-                                    <span class="text-[10px] font-bold uppercase bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">Fáb <?= $op['fabrica'] ?> - <?= $op['linha_nome'] ?></span>
-                                    <span class="text-[11px] text-slate-400 font-medium">Plan. <?= date('d/m/Y', strtotime($op['data_planejada'])) ?></span>
-                                </div>
-                                <div class="space-y-1">
-                                    <?php foreach ($op['produtos'] as $prod): ?>
-                                        <div class="text-xs bg-slate-50 px-2 py-1 rounded border border-slate-100 flex justify-between">
-                                            <span><strong class="text-slate-600">[<?= $prod['codigo'] ?>]</strong> <?= $prod['descricao'] ?></span>
-                                            <span class="font-bold text-slate-700"><?= number_format($prod['quantidade_apontada'],0,',','.') ?> / <?= number_format($prod['quantidade_planejada'], 0, ',', '.') ?> un</span>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                            </div>
-                            <?php if (!in_array($st_norm, ['PRODUCAO FINALIZADA', 'CANCELADO'])): ?>
-                                <div class="shrink-0 flex flex-col gap-2">
-                                    <button onclick="document.getElementById('modal_editar_op_<?= $op['id'] ?>').showModal()" class="w-8 h-8 rounded-lg border border-slate-200 text-slate-400 hover:text-blue-600 flex items-center justify-center"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg></button>
-                                </div>
-                            <?php endif; ?>
-                        </div>
+                    <?php foreach ($todas_ops as $idx => $op): ?>
+                        <?php render_op_card($op, $idx, $status_meta, $motivos_pendencia_labels, false, false, true); ?>
                     <?php endforeach; ?>
                     <div id="msg_vazio_global" class="hidden p-6 text-center text-sm text-slate-400 font-semibold border-2 border-dashed border-slate-200 rounded-xl">Nenhuma OP corresponde aos filtros de busca.</div>
                 </div>
@@ -595,6 +566,13 @@ try {
             
             document.querySelectorAll('.bloco-esteira').forEach(b => b.classList.add('hidden'));
             document.getElementById('bloco_esteira_' + id).classList.remove('hidden');
+
+            // Limpa o filtro local ao trocar de linha, pra não parecer que a
+            // fila da nova linha está "faltando" cards por causa de um termo
+            // digitado enquanto se olhava outra linha.
+            document.getElementById('filtro_esteira_op').value = '';
+            document.getElementById('filtro_esteira_produto').value = '';
+            aplicarFiltroEsteira();
         }
 
         // Inicialização do SPA
@@ -602,6 +580,35 @@ try {
             const btnFabricas = document.querySelectorAll('.tab-principal');
             if (btnFabricas.length > 1) btnFabricas[0].click(); // Inicia na primeira fábrica
         });
+
+        // ----------------------------------------------------
+        // FILTRO LOCAL DA ESTEIRA (por linha, não sai da tela)
+        // ----------------------------------------------------
+        function aplicarFiltroEsteira() {
+            const tOp = document.getElementById('filtro_esteira_op').value.toLowerCase();
+            const tProd = document.getElementById('filtro_esteira_produto').value.toLowerCase();
+            const filtroAtivo = tOp !== '' || tProd !== '';
+
+            document.querySelectorAll('.bloco-esteira').forEach(bloco => {
+                bloco.querySelectorAll('.op-card').forEach(card => {
+                    const matchOp = (card.dataset.op || '').includes(tOp);
+                    const matchProd = (card.dataset.prod || '').includes(tProd);
+                    const match = matchOp && matchProd;
+                    card.style.display = match ? '' : 'none';
+                    // Enquanto o filtro estiver ativo, desativa o arraste --
+                    // reordenar com a lista parcialmente escondida bagunçaria
+                    // a posição real dos cards que não estão visíveis.
+                    card.setAttribute('draggable', filtroAtivo ? 'false' : 'true');
+                });
+            });
+
+            const dica = document.getElementById('dica_filtro_esteira');
+            if (dica) {
+                dica.textContent = filtroAtivo
+                    ? 'Filtro ativo nesta linha: a reordenação por arraste está temporariamente desativada. Limpe os campos para voltar a arrastar.'
+                    : 'Filtro aplicado apenas à linha selecionada acima.';
+            }
+        }
 
         // ----------------------------------------------------
         // ADICIONAR PRODUTOS (À PROVA DE FALHAS)
@@ -710,7 +717,7 @@ try {
         document.querySelectorAll('.esteira').forEach(esteira => {
             esteira.addEventListener('dragstart', e => {
                 const card = e.target.closest('.op-card');
-                if(!card) return;
+                if(!card || card.getAttribute('draggable') === 'false') return;
                 dragEl = card; card.classList.add('opacity-40');
                 e.dataTransfer.effectAllowed = 'move';
             });

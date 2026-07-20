@@ -31,14 +31,17 @@ try {
     $stmt_ativo->execute([$linha_logada_id]);
     $apontamento_ativo = $stmt_ativo->fetch(PDO::FETCH_ASSOC);
 
-    // 3. Busca a Fila de OPs (Aguardando Início E Programadas)
+    // 3. Busca a Fila de OPs -- inclui os status intermediários do duplo gate
+    // (Separação/Formulação) pra não sumir da tela quando falta só um dos dois.
+    // Ordenada por ordem_fila: é a prioridade que o PCP define na esteira,
+    // espelhada aqui pro operador.
     $ops_disponiveis = [];
     if (!$apontamento_ativo) {
         $stmt_ops = $pdo->prepare("
-            SELECT id, op_sistema, data_planejada, status 
+            SELECT id, op_sistema, data_planejada, status, ordem_fila 
             FROM ordens_producao 
-            WHERE linha_id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO INICIO') 
-            ORDER BY data_planejada ASC, id ASC
+            WHERE linha_id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'AGUARDANDO ALMOXARIFADO', 'AGUARDANDO INICIO') 
+            ORDER BY ordem_fila ASC, data_planejada ASC, id ASC
         ");
         $stmt_ops->execute([$linha_logada_id]);
         $ops_disponiveis = $stmt_ops->fetchAll(PDO::FETCH_ASSOC);
@@ -90,31 +93,61 @@ try {
                     <input type="hidden" name="acao" value="iniciar">
                     
                     <div>
-                        <label class="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">1. Fila de OPs da Linha</label>
-                        <select name="op_id" required class="w-full px-4 py-3 border border-slate-300 rounded-xl font-bold text-slate-800 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-400">
-                            <option value="">-- Selecione a OP para iniciar --</option>
+                        <label class="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">1. Fila de Produção da Linha (ordem definida pelo PCP)</label>
+                        <div class="space-y-2 max-h-80 overflow-y-auto pr-1">
+                            <?php if (empty($ops_disponiveis)): ?>
+                                <div class="text-center p-6 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-semibold text-sm">Nenhuma OP na fila desta linha.</div>
+                            <?php endif; ?>
                             <?php 
                             $hoje = date('Y-m-d');
-                            foreach ($ops_disponiveis as $op): 
+                            foreach ($ops_disponiveis as $idx => $op): 
                                 $is_liberada = ($op['status'] === 'AGUARDANDO INICIO');
-                                $disabled = $is_liberada ? '' : 'disabled';
-                                
+
                                 $data_plan = $op['data_planejada'];
                                 if ($data_plan < $hoje) {
-                                    $tag_data = ' ATRASADA';
+                                    $tag_data = 'ATRASADA';
+                                    $cor_data = 'text-rose-600';
                                 } elseif ($data_plan == $hoje) {
-                                    $tag_data = ' HOJE';
+                                    $tag_data = 'HOJE';
+                                    $cor_data = 'text-blue-600';
                                 } else {
-                                    $tag_data = ' FUTURA (' . date('d/m', strtotime($data_plan)) . ')';
+                                    $tag_data = 'FUTURA (' . date('d/m', strtotime($data_plan)) . ')';
+                                    $cor_data = 'text-slate-400';
                                 }
 
-                                $tag_almox = $is_liberada ? '' : ' PENDENTE SEPARAÇÃO';
+                                // Reflete qual das 2 verificações (Separação/Formulação) ainda
+                                // falta, em vez de assumir que é sempre só o Almoxarifado.
+                                switch ($op['status']) {
+                                    case 'PROGRAMADO':
+                                        $tag_status = 'Pendente Separação e Formulação';
+                                        $cor_status = 'bg-slate-100 text-slate-600 border-slate-200';
+                                        break;
+                                    case 'AGUARDANDO FORMULACAO':
+                                        $tag_status = 'Pendente Formulação';
+                                        $cor_status = 'bg-purple-100 text-purple-700 border-purple-200';
+                                        break;
+                                    case 'AGUARDANDO ALMOXARIFADO':
+                                        $tag_status = 'Pendente Separação';
+                                        $cor_status = 'bg-cyan-100 text-cyan-700 border-cyan-200';
+                                        break;
+                                    default:
+                                        $tag_status = 'Liberada para Início';
+                                        $cor_status = 'bg-emerald-100 text-emerald-700 border-emerald-200';
+                                }
                             ?>
-                                <option value="<?= $op['id'] ?>" <?= $disabled ?>>
-                                    <?= $tag_data ?> | OP: <?= htmlspecialchars($op['op_sistema']) ?><?= $tag_almox ?>
-                                </option>
+                                <label class="flex items-center gap-3 p-3 rounded-xl border-2 transition-colors <?= $is_liberada ? 'border-slate-200 hover:border-blue-400 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50' : 'border-slate-100 bg-slate-50 opacity-70 cursor-not-allowed' ?>">
+                                    <input type="radio" name="op_id" value="<?= $op['id'] ?>" <?= $is_liberada ? 'required' : 'disabled' ?> class="w-5 h-5 text-blue-600 shrink-0">
+                                    <div class="w-7 h-7 flex items-center justify-center rounded-full bg-slate-200 text-slate-600 font-black text-xs shrink-0"><?= $idx + 1 ?></div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <span class="font-black text-slate-800 text-sm">OP <?= htmlspecialchars($op['op_sistema']) ?></span>
+                                            <span class="text-[10px] font-bold uppercase <?= $cor_data ?>"><?= $tag_data ?></span>
+                                        </div>
+                                    </div>
+                                    <span class="px-2 py-1 rounded text-[9px] font-bold uppercase border shrink-0 <?= $cor_status ?>"><?= $tag_status ?></span>
+                                </label>
                             <?php endforeach; ?>
-                        </select>
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -461,4 +494,4 @@ try {
         <?php endif; ?>
     </div>
 </body>
-</html> 
+</html>

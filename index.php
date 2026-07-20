@@ -23,7 +23,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             header("Location: programacao_pcp.php");
         } elseif ($usuario['setor'] == 'ALMOXARIFADO') {
             header("Location: separacao_almoxarifado.php");
-        } else {
+        } elseif($usuario['setor'] == 'FORMULACAO'){
+            header("Location: formulacao.php");
+        }else {
             header("Location: dashboard_admin.php"); // Admin, Qualidade, Diretoria
         }
         exit;
