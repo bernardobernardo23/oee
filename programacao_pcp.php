@@ -2,6 +2,7 @@
 session_start();
 require 'conexao.php';
 require_once 'card_op.php';
+require_once 'notificacoes.php';
 
 // Segurança: só usuário corporativo do setor PCP ou ADMIN
 if (!isset($_SESSION['tipo_acesso']) || $_SESSION['tipo_acesso'] !== 'usuario' || !in_array($_SESSION['setor'], ['PCP', 'ADMIN'])) {
@@ -85,6 +86,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_sistema'])) {
             }
         }
         $pdo->commit();
+
+        // Notifica os 2 setores que vão precisar agir nessa OP, mais o
+        // Admin -- que acompanha tudo que acontece no sistema, igual o PCP.
+        notificar_setor($pdo, 'ALMOXARIFADO', $op_id, 'OP_NOVA', "Nova OP {$op_sistema} programada, aguardando separação.");
+        notificar_setor($pdo, 'FORMULACAO', $op_id, 'OP_NOVA', "Nova OP {$op_sistema} programada, aguardando formulação.");
+        notificar_setor($pdo, 'ADMIN', $op_id, 'OP_NOVA', "Nova OP {$op_sistema} programada.");
+
         $_SESSION['flash_mensagem'] = "Ordem de Produção {$op_sistema} programada com sucesso!";
         $_SESSION['flash_tipo'] = 'sucesso';
     } catch (PDOException $e) {
@@ -102,6 +110,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_sistema'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
     try {
         $op_id = (int)$_POST['op_id'];
+
+        // Busca quem já mexeu nessa OP (se houver) ANTES de editar/cancelar,
+        // pra poder notificá-los depois -- é exatamente "quem já mexeu",
+        // não o setor inteiro.
+        $stmt_envolvidos = $pdo->prepare("SELECT op_sistema, separador_id, formulador_id FROM ordens_producao WHERE id = ?");
+        $stmt_envolvidos->execute([$op_id]);
+        $envolvidos = $stmt_envolvidos->fetch(PDO::FETCH_ASSOC);
+
         if ($_POST['acao'] === 'editar_op') {
             $pdo->beginTransaction();
             $linha_id       = !empty($_POST['linha_id']) ? (int)$_POST['linha_id'] : null;
@@ -136,10 +152,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
                 $pdo->prepare("DELETE FROM op_produtos WHERE id IN ($placeholders)")->execute(array_values($ids_excluir));
             }
             $pdo->commit();
+
+            if ($envolvidos) {
+                $msg = "A OP {$envolvidos['op_sistema']} foi reprogramada pelo PCP -- confira os dados atualizados.";
+                if (!empty($envolvidos['separador_id'])) notificar_usuario($pdo, (int)$envolvidos['separador_id'], $op_id, 'OP_REPROGRAMADA', $msg);
+                if (!empty($envolvidos['formulador_id'])) notificar_usuario($pdo, (int)$envolvidos['formulador_id'], $op_id, 'OP_REPROGRAMADA', $msg);
+                notificar_setor($pdo, 'ADMIN', $op_id, 'OP_REPROGRAMADA', $msg);
+            }
+
             $_SESSION['flash_mensagem'] = "Ordem de Produção atualizada!";
             $_SESSION['flash_tipo'] = 'sucesso';
         } elseif ($_POST['acao'] === 'cancelar_op') {
             $pdo->prepare("UPDATE ordens_producao SET status = 'CANCELADO' WHERE id = ?")->execute([$op_id]);
+
+            if ($envolvidos) {
+                $msg = "A OP {$envolvidos['op_sistema']} foi cancelada pelo PCP.";
+                if (!empty($envolvidos['separador_id'])) notificar_usuario($pdo, (int)$envolvidos['separador_id'], $op_id, 'OP_CANCELADA', $msg);
+                if (!empty($envolvidos['formulador_id'])) notificar_usuario($pdo, (int)$envolvidos['formulador_id'], $op_id, 'OP_CANCELADA', $msg);
+                notificar_setor($pdo, 'ADMIN', $op_id, 'OP_CANCELADA', $msg);
+            }
+
             $_SESSION['flash_mensagem'] = "OP Cancelada com sucesso!";
             $_SESSION['flash_tipo'] = 'sucesso';
         }
@@ -237,6 +269,17 @@ try {
         });
     }
     unset($lista_ops);
+
+    // Bolinha vermelha: quais fábricas têm pelo menos 1 linha com OP em
+    // aberto (qualquer status ainda dentro do pipeline, já calculado em
+    // $ops_esteira). Reaproveita o mapa linha_id -> fabrica de $linhas_dropdown,
+    // sem precisar de outra query.
+    $fabricas_com_pendencia = [];
+    foreach ($linhas_dropdown as $l) {
+        if (!empty($ops_esteira[$l['id']])) {
+            $fabricas_com_pendencia[$l['fabrica']] = true;
+        }
+    }
 
 } catch (PDOException $e) {
     die("Erro ao carregar: " . $e->getMessage());
@@ -350,8 +393,11 @@ try {
         <div class="mt-8">
             <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-3 mb-4">
                 <?php foreach ($fabricas as $fab): ?>
-                    <button type="button" onclick="mudarAbaPrincipal('fabrica', <?= $fab ?>)" id="tab_fabrica_<?= $fab ?>" class="tab-principal px-5 py-2.5 rounded-t-lg text-sm font-bold transition-colors bg-white text-slate-500 border border-slate-200 border-b-0 hover:bg-slate-100">
+                    <button type="button" onclick="mudarAbaPrincipal('fabrica', <?= $fab ?>)" id="tab_fabrica_<?= $fab ?>" class="tab-principal relative px-5 py-2.5 rounded-t-lg text-sm font-bold transition-colors bg-white text-slate-500 border border-slate-200 border-b-0 hover:bg-slate-100">
                         Fábrica <?= $fab ?>
+                        <?php if (!empty($fabricas_com_pendencia[$fab])): ?>
+                            <span class="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-rose-500 border-2 border-white" title="Há OPs em aberto nesta fábrica"></span>
+                        <?php endif; ?>
                     </button>
                 <?php endforeach; ?>
                 <button type="button" onclick="mudarAbaPrincipal('global')" id="tab_global" class="tab-principal px-5 py-2.5 rounded-t-lg text-sm font-bold transition-colors flex items-center gap-2 bg-white text-slate-500 border border-slate-200 border-b-0 hover:bg-slate-100">
@@ -362,8 +408,11 @@ try {
 
             <div id="container_linhas" class="flex flex-wrap gap-2 mb-6 hidden">
                 <?php foreach ($linhas_dropdown as $l): ?>
-                    <button type="button" onclick="selecionarLinha(<?= $l['id'] ?>)" id="btn_linha_<?= $l['id'] ?>" data-fabrica="<?= $l['fabrica'] ?>" class="btn-linha px-4 py-2 rounded-lg text-xs font-bold uppercase transition-colors border bg-white text-slate-600 border-slate-200 hover:bg-blue-50 hidden">
+                    <button type="button" onclick="selecionarLinha(<?= $l['id'] ?>)" id="btn_linha_<?= $l['id'] ?>" data-fabrica="<?= $l['fabrica'] ?>" class="btn-linha relative px-4 py-2 rounded-lg text-xs font-bold uppercase transition-colors border bg-white text-slate-600 border-slate-200 hover:bg-blue-50 hidden">
                         <?= htmlspecialchars($l['login']) ?>
+                        <?php if (!empty($ops_esteira[$l['id']])): ?>
+                            <span class="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-rose-500 border-2 border-white" title="<?= count($ops_esteira[$l['id']]) ?> OP(s) em aberto"></span>
+                        <?php endif; ?>
                     </button>
                 <?php endforeach; ?>
             </div>
@@ -502,6 +551,8 @@ try {
     </div>
 
     <script>
+        <?php render_op_card_scripts(); ?>
+
         function toggleBox(id) {
             document.getElementById('box_manual').classList.add('hidden');
             document.getElementById('box_planilha').classList.add('hidden');
@@ -577,6 +628,22 @@ try {
 
         // Inicialização do SPA
         window.addEventListener('DOMContentLoaded', () => {
+            // Se veio de um clique em notificação (?buscar_op=XXX), abre
+            // direto na Visão Global já filtrada por essa OP, em vez do
+            // comportamento padrão de abrir a primeira fábrica.
+            const params = new URLSearchParams(window.location.search);
+            const opBuscada = params.get('buscar_op');
+            if (opBuscada) {
+                mudarAbaPrincipal('global');
+                const campoFiltro = document.getElementById('filtro_op');
+                campoFiltro.value = opBuscada;
+                aplicarFiltrosGlobal();
+                // Limpa a URL (tira o ?buscar_op=) sem recarregar a página,
+                // pra não ficar reaplicando o filtro se a pessoa der F5.
+                window.history.replaceState({}, '', window.location.pathname);
+                return;
+            }
+
             const btnFabricas = document.querySelectorAll('.tab-principal');
             if (btnFabricas.length > 1) btnFabricas[0].click(); // Inicia na primeira fábrica
         });

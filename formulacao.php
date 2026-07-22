@@ -1,6 +1,8 @@
 <?php
 session_start();
 require 'conexao.php';
+require_once 'card_op.php';
+require_once 'notificacoes.php';
 
 // Validação de Segurança básica: Garante que o usuário está logado
 if (!isset($_SESSION['tipo_acesso']) || $_SESSION['tipo_acesso'] !== 'usuario' || !in_array($_SESSION['setor'], ['FORMULACAO', 'ADMIN'])) {
@@ -35,6 +37,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
             $mensagem = "Selecione o motivo e descreva a pendência antes de salvar.";
             $tipo_msg = 'erro';
         } else {
+            // Dados da OP pra decidir quem notificar -- buscados ANTES de
+            // mexer no status, pra saber se o Almoxarifado já tinha terminado.
+            $stmt_op = $pdo->prepare("SELECT op_sistema, linha_id, criador_id, data_separacao FROM ordens_producao WHERE id = ?");
+            $stmt_op->execute([$op_id]);
+            $dados_op = $stmt_op->fetch(PDO::FETCH_ASSOC);
+
             $pdo->beginTransaction();
 
             if ($acao === 'confirmar_formulado') {
@@ -55,6 +63,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
                 $stmt_log = $pdo->prepare("INSERT INTO formulacoes (op_id, usuario_id, status, auxiliares_formulacao, observacao) VALUES (?, ?, 'FORMULADO', ?, ?)");
                 $stmt_log->execute([$op_id, $usuario_id, $auxiliares, $observacao]);
 
+                // Avisa o Almoxarifado (setor inteiro), o PCP (só quem
+                // criou essa OP) e o Admin (tudo) que a formulação foi
+                // concluída -- independente de já liberar pra produção ou não.
+                if ($dados_op) {
+                    notificar_setor($pdo, 'ALMOXARIFADO', $op_id, 'OP_FORMULADA', "OP {$dados_op['op_sistema']} formulada.");
+                    notificar_setor($pdo, 'ADMIN', $op_id, 'OP_FORMULADA', "OP {$dados_op['op_sistema']} formulada.");
+                    if (!empty($dados_op['criador_id'])) {
+                        notificar_usuario($pdo, (int)$dados_op['criador_id'], $op_id, 'OP_FORMULADA', "OP {$dados_op['op_sistema']} formulada.");
+                    }
+                }
+
+                // Se o Almoxarifado já tinha terminado, essa confirmação
+                // acabou de liberar a OP -- avisa a linha que já pode
+                // iniciar, e o Admin que está acompanhando tudo.
+                if ($dados_op && !empty($dados_op['data_separacao']) && !empty($dados_op['linha_id'])) {
+                    notificar_linha($pdo, (int)$dados_op['linha_id'], $op_id, 'OP_LIBERADA', "A OP {$dados_op['op_sistema']} foi liberada e já pode ser iniciada.");
+                    notificar_setor($pdo, 'ADMIN', $op_id, 'OP_LIBERADA', "OP {$dados_op['op_sistema']} liberada pra produção.");
+                }
+
                 $mensagem = "Formulação confirmada com sucesso!";
                 $tipo_msg = 'sucesso';
             } elseif ($acao === 'pendencia') {
@@ -63,6 +90,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
                 // acompanhamento (resolvida por fora do sistema).
                 $stmt_log = $pdo->prepare("INSERT INTO formulacoes (op_id, usuario_id, status, motivo_pendencia, auxiliares_formulacao, observacao) VALUES (?, ?, 'PENDENCIA', ?, ?, ?)");
                 $stmt_log->execute([$op_id, $usuario_id, $motivo, $auxiliares, $observacao]);
+
+                if ($dados_op && !empty($dados_op['criador_id'])) {
+                    $motivo_label = $motivos_pendencia_labels[$motivo] ?? 'Motivo não informado';
+                    notificar_usuario($pdo, (int)$dados_op['criador_id'], $op_id, 'PENDENCIA_FORMULACAO', "Pendência ao formular a OP {$dados_op['op_sistema']}: {$motivo_label} -- {$observacao}");
+                    notificar_setor($pdo, 'ADMIN', $op_id, 'PENDENCIA_FORMULACAO', "Pendência ao formular a OP {$dados_op['op_sistema']}: {$motivo_label} -- {$observacao}");
+                }
 
                 $mensagem = "Pendência registrada. A OP permanece na fila até nova confirmação.";
                 $tipo_msg = 'erro';
@@ -77,27 +110,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
     }
 }
 
-function buscar_produtos_op(PDO $pdo, $op_id)
-{
-    $stmt = $pdo->prepare("SELECT id as op_produto_id, produto_id, quantidade_planejada FROM op_produtos WHERE op_id = ?");
-    $stmt->execute([$op_id]);
-    $produtos = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    foreach ($produtos as &$prod) {
-        $p_info = $pdo->prepare("SELECT codigo, descricao FROM produtos WHERE id = ?");
-        $p_info->execute([$prod['produto_id']]);
-        $p_data = $p_info->fetch(PDO::FETCH_ASSOC);
-        $prod['codigo'] = $p_data['codigo'] ?? 'N/A';
-        $prod['descricao'] = $p_data['descricao'] ?? 'Produto não identificado';
-    }
-    unset($prod);
-    return $produtos;
-}
-
 // Renderiza o par de modais (Conferir Lote + Registrar Pendência) para uma OP.
 function render_modais_op(array $op, string $prefix, string $nome_usuario_logado, array $motivos_labels)
 {
-    $tem_pendencia = ($op['pendencia_status'] ?? null) === 'PENDENCIA';
+    $tem_pendencia = ($op['pendencia_form_status'] ?? null) === 'PENDENCIA';
     $id_modal_lote = 'modal_op_' . $prefix . $op['id'];
     $id_modal_pendencia = 'modal_pendencia_' . $prefix . $op['id'];
 ?>
@@ -131,9 +147,9 @@ function render_modais_op(array $op, string $prefix, string $nome_usuario_logado
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
                     </svg>
                     <div>
-                        <span class="text-[11px] font-bold text-rose-600 uppercase tracking-wide block">Pendência em aberto — <?= htmlspecialchars($motivos_labels[$op['pendencia_motivo']] ?? 'Motivo não informado') ?></span>
-                        <span class="text-sm text-rose-700"><?= htmlspecialchars($op['pendencia_obs'] ?? '') ?></span>
-                        <span class="block text-rose-400 text-xs mt-0.5">Registrada em <?= date('d/m/Y H:i', strtotime($op['pendencia_data'])) ?></span>
+                        <span class="text-[11px] font-bold text-rose-600 uppercase tracking-wide block">Pendência em aberto — <?= htmlspecialchars($motivos_labels[$op['pendencia_form_motivo']] ?? 'Motivo não informado') ?></span>
+                        <span class="text-sm text-rose-700"><?= htmlspecialchars($op['pendencia_form_obs'] ?? '') ?></span>
+                        <span class="block text-rose-400 text-xs mt-0.5">Registrada em <?= date('d/m/Y H:i', strtotime($op['pendencia_form_data'])) ?></span>
                     </div>
                 </div>
             <?php endif; ?>
@@ -265,25 +281,48 @@ try {
     foreach ($linhas_da_fabrica as $l) if ($l['id'] == $linha_selecionada_id) $pertence = true;
     if (!$pertence) $linha_selecionada_id = $linhas_da_fabrica[0]['id'] ?? 0;
 
-    $sql_ultima_tentativa = "
-        SELECT sf1.op_id, sf1.status, sf1.motivo_pendencia, sf1.observacao, sf1.created_at
-        FROM formulacoes sf1
-        INNER JOIN (SELECT op_id, MAX(id) AS max_id FROM formulacoes GROUP BY op_id) latest
-            ON sf1.id = latest.max_id
-    ";
+    // Bolinha vermelha: quantas OPs aguardam especificamente a Formulação
+    // (PROGRAMADO ou AGUARDANDO FORMULACAO), por linha e por fábrica.
+    $linhas_pendentes_form = array_column(
+        $pdo->query("SELECT linha_id, COUNT(*) as qtd FROM ordens_producao WHERE status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO') AND linha_id IS NOT NULL GROUP BY linha_id")->fetchAll(PDO::FETCH_ASSOC),
+        'qtd', 'linha_id'
+    );
+    $fabricas_pendentes_form = array_column(
+        $pdo->query("
+            SELECT l.fabrica, COUNT(op.id) as qtd
+            FROM ordens_producao op
+            JOIN linhas l ON op.linha_id = l.id
+            WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO')
+            GROUP BY l.fabrica
+        ")->fetchAll(PDO::FETCH_ASSOC),
+        'qtd', 'fabrica'
+    );
+
+    // Mesma paleta de status usada em programacao_pcp.php -- render_op_card()
+    // busca cor/label aqui pelo status normalizado da OP.
+    $status_meta = [
+        'PROGRAMADO'              => ['label' => 'Programado',            'cor' => 'pink'],
+        'AGUARDANDO FORMULACAO'   => ['label' => 'Aguard. Formulação',    'cor' => 'purple'],
+        'AGUARDANDO ALMOXARIFADO' => ['label' => 'Aguard. Almoxarifado',  'cor' => 'cyan'],
+        'AGUARDANDO INICIO'       => ['label' => 'Aguardando Início',     'cor' => 'amber'],
+    ];
 
     // ========================================================================
     // 2. FILA DE FORMULAÇÃO (PROGRAMADO ou AGUARDANDO FORMULACAO), ordenada
     // pela prioridade que o PCP definiu (mesma ordem_fila do Almoxarifado).
+    // Traz também a última tentativa do Almoxarifado (sa) -- o card mostra
+    // os selos dos 2 setores em qualquer tela.
     // ========================================================================
     $stmt_ops = $pdo->prepare("
         SELECT op.id, op.op_sistema, op.data_planejada, op.observacao_almoxarifado, op.ordem_fila,
-               op.data_separacao, op.status,
+               op.data_separacao, op.data_formulacao, op.status,
                l.login as linha_nome, l.fabrica,
-               sf.status AS pendencia_status, sf.motivo_pendencia AS pendencia_motivo, sf.observacao AS pendencia_obs, sf.created_at AS pendencia_data
+               sa.status AS pendencia_almox_status, sa.observacao AS pendencia_almox_obs, sa.created_at AS pendencia_almox_data,
+               sf.status AS pendencia_form_status, sf.motivo_pendencia AS pendencia_form_motivo, sf.observacao AS pendencia_form_obs, sf.created_at AS pendencia_form_data
         FROM ordens_producao op
         LEFT JOIN linhas l ON op.linha_id = l.id
-        LEFT JOIN ($sql_ultima_tentativa) sf ON sf.op_id = op.id
+        LEFT JOIN (" . sql_ultima_tentativa_almoxarifado() . ") sa ON sa.op_id = op.id
+        LEFT JOIN (" . sql_ultima_tentativa_formulacao() . ") sf ON sf.op_id = op.id
         WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO') AND op.linha_id = ?
         ORDER BY op.ordem_fila ASC, op.id ASC
     ");
@@ -298,13 +337,15 @@ try {
     // 3. PENDÊNCIAS ABERTAS (global, qualquer linha)
     // ========================================================================
     $stmt_pend = $pdo->query("
-        SELECT op.id, op.op_sistema, op.data_planejada, op.observacao_almoxarifado, op.data_separacao,
+        SELECT op.id, op.op_sistema, op.data_planejada, op.observacao_almoxarifado, op.data_separacao, op.data_formulacao, op.status,
                l.login as linha_nome, l.fabrica,
-               sf.status AS pendencia_status, sf.motivo_pendencia AS pendencia_motivo, sf.observacao AS pendencia_obs, sf.created_at AS pendencia_data,
+               sa.status AS pendencia_almox_status, sa.observacao AS pendencia_almox_obs, sa.created_at AS pendencia_almox_data,
+               sf.status AS pendencia_form_status, sf.motivo_pendencia AS pendencia_form_motivo, sf.observacao AS pendencia_form_obs, sf.created_at AS pendencia_form_data,
                u.nome_completo AS nome_registrou
         FROM ordens_producao op
         LEFT JOIN linhas l ON op.linha_id = l.id
-        INNER JOIN ($sql_ultima_tentativa) sf ON sf.op_id = op.id AND sf.status = 'PENDENCIA'
+        INNER JOIN (" . sql_ultima_tentativa_formulacao() . ") sf ON sf.op_id = op.id AND sf.status = 'PENDENCIA'
+        LEFT JOIN (" . sql_ultima_tentativa_almoxarifado() . ") sa ON sa.op_id = op.id
         LEFT JOIN formulacoes sf_full ON sf_full.op_id = op.id AND sf_full.created_at = sf.created_at
         LEFT JOIN usuarios u ON sf_full.usuario_id = u.id
         WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO')
@@ -401,8 +442,11 @@ try {
 
             <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-3 mt-2">
                 <?php foreach ($fabricas as $fab): ?>
-                    <a href="?fabrica=<?= $fab ?>" class="px-4 py-2 rounded-lg text-sm font-bold transition-colors <?= $fab == $fabrica_selecionada ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-100' ?>">
+                    <a href="?fabrica=<?= $fab ?>" class="relative px-4 py-2 rounded-lg text-sm font-bold transition-colors <?= $fab == $fabrica_selecionada ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-100' ?>">
                         Fábrica <?= $fab ?>
+                        <?php if (!empty($fabricas_pendentes_form[$fab])): ?>
+                            <span class="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-rose-500 border-2 border-white" title="<?= $fabricas_pendentes_form[$fab] ?> OP(s) aguardando a Formulação"></span>
+                        <?php endif; ?>
                     </a>
                 <?php endforeach; ?>
             </div>
@@ -412,8 +456,11 @@ try {
                     <p class="text-sm text-slate-400 italic">Nenhuma linha cadastrada nesta fábrica.</p>
                 <?php endif; ?>
                 <?php foreach ($linhas_da_fabrica as $l): ?>
-                    <a href="?fabrica=<?= $fabrica_selecionada ?>&linha_id=<?= $l['id'] ?>" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide transition-colors border <?= $l['id'] == $linha_selecionada_id ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-blue-50 hover:border-blue-200' ?>">
+                    <a href="?fabrica=<?= $fabrica_selecionada ?>&linha_id=<?= $l['id'] ?>" class="relative px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide transition-colors border <?= $l['id'] == $linha_selecionada_id ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-blue-50 hover:border-blue-200' ?>">
                         <?= htmlspecialchars($l['login']) ?>
+                        <?php if (!empty($linhas_pendentes_form[$l['id']])): ?>
+                            <span class="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-rose-500 border-2 border-white" title="<?= $linhas_pendentes_form[$l['id']] ?> OP(s) aguardando a Formulação"></span>
+                        <?php endif; ?>
                     </a>
                 <?php endforeach; ?>
             </div>
@@ -437,54 +484,8 @@ try {
                 </div>
             <?php else: ?>
                 <div class="space-y-3">
-                    <?php foreach ($detalhes_ops as $idx => $op):
-                        $tem_pendencia = ($op['pendencia_status'] ?? null) === 'PENDENCIA';
-                        $sep_ok = !empty($op['data_separacao']);
-                    ?>
-                        <div class="bg-white border <?= $tem_pendencia ? 'border-rose-300' : 'border-slate-200' ?> rounded-xl p-4 shadow-sm">
-                            <div class="flex items-start gap-3">
-                                <div class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 font-bold text-xs shrink-0 mt-0.5">
-                                    <?= $idx + 1 ?>
-                                </div>
-
-                                <div class="flex-1 min-w-0 space-y-2">
-                                    <div class="flex flex-wrap items-center gap-2">
-                                        <span class="font-bold text-slate-900 text-sm">OP <?= htmlspecialchars($op['op_sistema']) ?></span>
-                                        <span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border bg-slate-100 text-slate-600 border-slate-200">Fáb. <?= $op['fabrica'] ?> · <?= htmlspecialchars($op['linha_nome']) ?></span>
-                                        <span class="text-[11px] text-slate-400 font-medium">Planejada <?= date('d/m/Y', strtotime($op['data_planejada'])) ?></span>
-                                        <?php if ($sep_ok): ?>
-                                            <span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border bg-emerald-100 text-emerald-700 border-emerald-200">✓ Almoxarifado OK</span>
-                                        <?php endif; ?>
-                                        <?php if ($tem_pendencia): ?>
-                                            <span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border bg-rose-100 text-rose-700 border-rose-200">Pendência aberta</span>
-                                        <?php endif; ?>
-                                    </div>
-
-                                    <?php if (!empty($op['observacao_almoxarifado'])): ?>
-                                        <div class="text-[11px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-3 py-1.5">
-                                            <span class="font-semibold text-slate-600">Obs. PCP:</span> <?= htmlspecialchars($op['observacao_almoxarifado']) ?>
-                                        </div>
-                                    <?php endif; ?>
-
-                                    <div class="space-y-1 pt-1">
-                                        <?php foreach ($op['produtos'] as $prod): ?>
-                                            <div class="flex items-center justify-between text-xs bg-slate-50 rounded-lg px-3 py-1.5 border border-slate-100">
-                                                <span class="text-slate-600"><span class="font-bold text-slate-700">[<?= htmlspecialchars($prod['codigo']) ?>]</span> <?= htmlspecialchars($prod['descricao']) ?></span>
-                                                <span class="font-bold text-slate-700 shrink-0 ml-2"><?= number_format($prod['quantidade_planejada'], 0, ',', '.') ?> un</span>
-                                            </div>
-                                        <?php endforeach; ?>
-                                    </div>
-                                </div>
-
-                                <button onclick="document.getElementById('modal_op_<?= $op['id'] ?>').showModal()" class="<?= $tem_pendencia ? 'bg-rose-100 hover:bg-rose-500 text-rose-800 border-rose-200' : 'bg-purple-100 hover:bg-purple-500 text-purple-800 border-purple-200' ?> hover:text-white border font-bold py-2 px-4 rounded-lg transition-all text-xs shadow-sm flex items-center justify-center gap-1.5 shrink-0 self-center">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M5 8h14M5 21h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                                    </svg>
-                                    Conferir Lote
-                                </button>
-                            </div>
-                        </div>
-
+                    <?php foreach ($detalhes_ops as $idx => $op): ?>
+                        <?php render_op_card($op, $idx, $status_meta, $motivos_pendencia_labels, false, true, false, 'operacional', '', 'Conferir Lote'); ?>
                         <?php render_modais_op($op, '', $_SESSION['nome'], $motivos_pendencia_labels); ?>
                     <?php endforeach; ?>
                 </div>
@@ -506,40 +507,8 @@ try {
                     <p class="text-sm text-slate-400 font-medium">Todas as OPs programadas estão liberadas para formulação normal.</p>
                 </div>
             <?php else: ?>
-                <?php foreach ($pendencias_abertas as $op): ?>
-                    <div class="bg-white border border-rose-300 rounded-xl p-4 shadow-sm">
-                        <div class="flex items-start gap-3">
-                            <div class="w-8 h-8 flex items-center justify-center rounded-full bg-rose-100 text-rose-600 shrink-0 mt-0.5">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-                                </svg>
-                            </div>
-
-                            <div class="flex-1 min-w-0 space-y-2">
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <span class="font-bold text-slate-900 text-sm">OP <?= htmlspecialchars($op['op_sistema']) ?></span>
-                                    <span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border bg-slate-100 text-slate-600 border-slate-200">Fáb. <?= $op['fabrica'] ?> · <?= htmlspecialchars($op['linha_nome']) ?></span>
-                                    <span class="text-[11px] text-slate-400 font-medium">Planejada <?= date('d/m/Y', strtotime($op['data_planejada'])) ?></span>
-                                </div>
-
-                                <div class="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
-                                    <span class="text-[10px] font-bold text-rose-600 uppercase tracking-wide block"><?= htmlspecialchars($motivos_pendencia_labels[$op['pendencia_motivo']] ?? 'Motivo não informado') ?></span>
-                                    <span class="text-sm text-rose-700"><?= htmlspecialchars($op['pendencia_obs'] ?? '') ?></span>
-                                    <span class="block text-rose-400 text-xs mt-1">
-                                        Registrada por <?= htmlspecialchars($op['nome_registrou'] ?? 'Desconhecido') ?> em <?= date('d/m/Y H:i', strtotime($op['pendencia_data'])) ?>
-                                    </span>
-                                </div>
-                            </div>
-
-                            <button onclick="document.getElementById('modal_op_pend_<?= $op['id'] ?>').showModal()" class="bg-rose-100 hover:bg-rose-500 text-rose-800 hover:text-white border border-rose-200 font-bold py-2 px-4 rounded-lg transition-all text-xs shadow-sm flex items-center justify-center gap-1.5 shrink-0 self-center">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M5 8h14M5 21h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                                </svg>
-                                Resolver
-                            </button>
-                        </div>
-                    </div>
-
+                <?php foreach ($pendencias_abertas as $idx => $op): ?>
+                    <?php render_op_card($op, $idx, $status_meta, $motivos_pendencia_labels, false, false, true, 'operacional', 'pend_', 'Resolver'); ?>
                     <?php render_modais_op($op, 'pend_', $_SESSION['nome'], $motivos_pendencia_labels); ?>
                 <?php endforeach; ?>
             <?php endif; ?>
@@ -615,6 +584,8 @@ try {
     </div>
 
     <script>
+        <?php render_op_card_scripts(); ?>
+
         function mudarAba(abaId) {
             ['pendentes', 'pendencias', 'historico'].forEach(a => {
                 document.getElementById('aba_' + a).classList.add('hidden');

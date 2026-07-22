@@ -1,6 +1,7 @@
 <?php
 session_start();
 require 'conexao.php';
+require 'notificacoes.php';
 
 if (!isset($_SESSION['linha_id'])) {
     die("Acesso negado.");
@@ -22,18 +23,27 @@ try {
         $data_hoje = date('Y-m-d');
         $agora = date('Y-m-d H:i:s');
 
-        // Busca nome da OP
-        $stmt_op = $pdo->prepare("SELECT op_sistema FROM ordens_producao WHERE id = ?");
+        // Busca nome da OP e quem programou (pra notificar o PCP)
+        $stmt_op = $pdo->prepare("SELECT op_sistema, criador_id FROM ordens_producao WHERE id = ?");
         $stmt_op->execute([$op_id]);
-        $op_sistema = $stmt_op->fetchColumn();
+        $dados_op = $stmt_op->fetch(PDO::FETCH_ASSOC);
+        $op_sistema = $dados_op['op_sistema'] ?? null;
 
         // Insere Apontamento Aberto
         $stmt = $pdo->prepare("INSERT INTO apontamentos (linha_id, ordem_producao, nome_operador, equipe_auxiliares, data_registro, hora_inicio) VALUES (?, ?, ?, ?, ?, ?)");
         $stmt->execute([$linha_id, $op_sistema, $nome_operador, $equipe_auxiliares, $data_hoje, $agora]);
 
-        // Atualiza status da OP
-        $pdo->prepare("UPDATE ordens_producao SET status = 'PRODUÇÃO INICIADA' WHERE id = ?")->execute([$op_id]);
-        
+        // Atualiza status da OP -- SEM acento: 'PRODUCAO INICIADA' é o
+        // valor real do enum (a versão anterior gravava 'PRODUÇÃO
+        // INICIADA' com acento, que não existe no enum e falhava).
+        $pdo->prepare("UPDATE ordens_producao SET status = 'PRODUCAO INICIADA' WHERE id = ?")->execute([$op_id]);
+
+        if (!empty($dados_op['criador_id'])) {
+            $nome_linha = strtoupper($_SESSION['login'] ?? "linha {$linha_id}");
+            notificar_usuario($pdo, (int)$dados_op['criador_id'], (int)$op_id, 'OP_PRODUCAO_INICIADA', "OP {$op_sistema} iniciou produção na linha {$nome_linha}.");
+            notificar_setor($pdo, 'ADMIN', (int)$op_id, 'OP_PRODUCAO_INICIADA', "OP {$op_sistema} iniciou produção na linha {$nome_linha}.");
+        }
+
         $msg = "Produção iniciada com sucesso!";
     }
 
@@ -52,7 +62,25 @@ try {
 
         // Atualiza status da OP
         $pdo->prepare("UPDATE ordens_producao SET status = 'PAUSADO' WHERE id = ?")->execute([$op_id]);
-        
+
+        // Busca nome da OP + quem programou, e a descrição do motivo,
+        // pra notificar PCP e Admin com uma mensagem que já diz o porquê.
+        $stmt_op_pausa = $pdo->prepare("SELECT op_sistema, criador_id FROM ordens_producao WHERE id = ?");
+        $stmt_op_pausa->execute([$op_id]);
+        $dados_op_pausa = $stmt_op_pausa->fetch(PDO::FETCH_ASSOC);
+
+        $stmt_motivo = $pdo->prepare("SELECT codigo, descricao FROM motivos_parada WHERE id = ?");
+        $stmt_motivo->execute([$motivo_id]);
+        $motivo_parada = $stmt_motivo->fetch(PDO::FETCH_ASSOC);
+        $desc_motivo = $motivo_parada ? "{$motivo_parada['codigo']} - {$motivo_parada['descricao']}" : 'motivo não identificado';
+
+        if (!empty($dados_op_pausa['criador_id'])) {
+            $nome_linha_pausa = strtoupper($_SESSION['login'] ?? "linha {$linha_id}");
+            $msg_pausa = "OP {$dados_op_pausa['op_sistema']} pausada na linha {$nome_linha_pausa}. Motivo: {$desc_motivo}.";
+            notificar_usuario($pdo, (int)$dados_op_pausa['criador_id'], (int)$op_id, 'OP_PAUSADA', $msg_pausa);
+            notificar_setor($pdo, 'ADMIN', (int)$op_id, 'OP_PAUSADA', $msg_pausa);
+        }
+
         $msg = "Máquina pausada.";
     }
 
@@ -62,12 +90,13 @@ try {
     elseif ($acao === 'retomar') {
         $apontamento_id = $_POST['apontamento_id'];
         $op_id = $_POST['op_id'];
-        
+
         // Pega os dados da parada atual
         $stmt = $pdo->prepare("SELECT parada_inicio, motivo_parada_ativa_id FROM apontamentos WHERE id = ?");
         $stmt->execute([$apontamento_id]);
         $parada = $stmt->fetch(PDO::FETCH_ASSOC);
 
+        $minutos_parados = 0;
         if ($parada['parada_inicio']) {
             $inicio_parada = new DateTime($parada['parada_inicio']);
             $agora = new DateTime();
@@ -84,9 +113,22 @@ try {
             $pdo->prepare("UPDATE apontamentos SET parada_inicio = NULL, motivo_parada_ativa_id = NULL WHERE id = ?")->execute([$apontamento_id]);
         }
 
-        // Volta a OP para produzindo
-        $pdo->prepare("UPDATE ordens_producao SET status = 'PRODUÇÃO INICIADA' WHERE id = ?")->execute([$op_id]);
-        
+        // Volta a OP para produzindo -- SEM acento, igual ao enum real.
+        $pdo->prepare("UPDATE ordens_producao SET status = 'PRODUCAO INICIADA' WHERE id = ?")->execute([$op_id]);
+
+        // Busca nome da OP + quem programou, pra notificar PCP e Admin.
+        $stmt_op_retoma = $pdo->prepare("SELECT op_sistema, criador_id FROM ordens_producao WHERE id = ?");
+        $stmt_op_retoma->execute([$op_id]);
+        $dados_op_retoma = $stmt_op_retoma->fetch(PDO::FETCH_ASSOC);
+
+        if (!empty($dados_op_retoma['criador_id'])) {
+            $nome_linha_retoma = strtoupper($_SESSION['login'] ?? "linha {$linha_id}");
+            $msg_retoma = "OP {$dados_op_retoma['op_sistema']} retomou produção na linha {$nome_linha_retoma}"
+                . ($minutos_parados > 0 ? " (parada de {$minutos_parados} min)." : ".");
+            notificar_usuario($pdo, (int)$dados_op_retoma['criador_id'], (int)$op_id, 'OP_RETOMADA', $msg_retoma);
+            notificar_setor($pdo, 'ADMIN', (int)$op_id, 'OP_RETOMADA', $msg_retoma);
+        }
+
         $msg = "Produção retomada!";
     }
 
@@ -98,6 +140,11 @@ try {
         $op_id = $_POST['op_id'];
         $agora_str = date('Y-m-d H:i:s');
         $agora_dt = new DateTime($agora_str);
+
+        // Busca nome da OP e quem programou (pra notificar o PCP no final)
+        $stmt_op_final = $pdo->prepare("SELECT op_sistema, criador_id FROM ordens_producao WHERE id = ?");
+        $stmt_op_final->execute([$op_id]);
+        $dados_op_final = $stmt_op_final->fetch(PDO::FETCH_ASSOC);
 
         // 1. Fecha o apontamento
         $pdo->prepare("UPDATE apontamentos SET hora_fim = ? WHERE id = ?")->execute([$agora_str, $apontamento_id]);
@@ -127,14 +174,14 @@ try {
             }
         }
 
-        // 4. ATUALIZA OP PARA VERDE (FINALIZADA)
-        $pdo->prepare("UPDATE ordens_producao SET status = 'PRODUÇÃO FINALIZADA' WHERE id = ?")->execute([$op_id]);
+        // 4. ATUALIZA OP PARA VERDE (FINALIZADA) -- SEM acento, igual ao enum real.
+        $pdo->prepare("UPDATE ordens_producao SET status = 'PRODUCAO FINALIZADA' WHERE id = ?")->execute([$op_id]);
 
         // ================== CÁLCULO DE OEE ==================
         $stmt_ap = $pdo->prepare("SELECT hora_inicio FROM apontamentos WHERE id = ?");
         $stmt_ap->execute([$apontamento_id]);
         $inicio_dt = new DateTime($stmt_ap->fetchColumn());
-        
+
         $intervalo = $inicio_dt->diff($agora_dt);
         $tempoTotalTurno = ($intervalo->days * 24 * 60) + ($intervalo->h * 60) + $intervalo->i;
 
@@ -153,7 +200,7 @@ try {
         $stmt_prod_oee = $pdo->prepare("SELECT SUM(producao_boas) as total_boas, SUM(producao_refugo) as total_refugo FROM apontamento_producao WHERE apontamento_id = ?");
         $stmt_prod_oee->execute([$apontamento_id]);
         $res_prod = $stmt_prod_oee->fetch(PDO::FETCH_ASSOC);
-        
+
         $totalBoas = (int)$res_prod['total_boas'];
         $producaoTotalReal = $totalBoas + (int)$res_prod['total_refugo'];
 
@@ -167,7 +214,13 @@ try {
         $oee_geral = ($disponibilidade / 100) * ($performance / 100) * ($qualidade / 100) * 100;
 
         $pdo->prepare("UPDATE apontamentos SET oee_disponibilidade=?, oee_performance=?, oee_qualidade=?, oee_geral=? WHERE id=?")
-            ->execute([round($disponibilidade,2), round($performance,2), round($qualidade,2), round($oee_geral,2), $apontamento_id]);
+            ->execute([round($disponibilidade, 2), round($performance, 2), round($qualidade, 2), round($oee_geral, 2), $apontamento_id]);
+
+        if (!empty($dados_op_final['criador_id'])) {
+            $msg_final = "OP {$dados_op_final['op_sistema']} finalizada. OEE geral: " . round($oee_geral, 1) . "%.";
+            notificar_usuario($pdo, (int)$dados_op_final['criador_id'], (int)$op_id, 'OP_PRODUZIDA', $msg_final);
+            notificar_setor($pdo, 'ADMIN', (int)$op_id, 'OP_PRODUZIDA', $msg_final);
+        }
 
         $msg = "Turno Finalizado! OEE processado com sucesso.";
     }

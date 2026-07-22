@@ -2,6 +2,7 @@
 session_start();
 require 'conexao.php';
 require_once 'card_op.php';
+require_once 'notificacoes.php';
 
 // Validação de Segurança básica: Garante que o usuário está logado
 if (!isset($_SESSION['tipo_acesso']) || $_SESSION['tipo_acesso'] !== 'usuario' || !in_array($_SESSION['setor'], ['ALMOXARIFADO', 'ADMIN'])) {
@@ -39,6 +40,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
             $mensagem = "Não é possível registrar uma pendência sem descrever o motivo.";
             $tipo_msg = 'erro';
         } else {
+            // Dados da OP pra decidir quem notificar e com qual mensagem --
+            // buscados ANTES de mexer no status, pra saber se a Formulação
+            // já tinha terminado (decide se libera pra AGUARDANDO INICIO).
+            $stmt_op = $pdo->prepare("SELECT op_sistema, linha_id, criador_id, data_formulacao FROM ordens_producao WHERE id = ?");
+            $stmt_op->execute([$op_id]);
+            $dados_op = $stmt_op->fetch(PDO::FETCH_ASSOC);
+
             $pdo->beginTransaction();
 
             if ($acao === 'confirmar_separado') {
@@ -59,6 +67,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
                 $stmt_log = $pdo->prepare("INSERT INTO separacoes_almoxarifado (op_id, usuario_id, status, auxiliares_separacao, observacao) VALUES (?, ?, 'SEPARADO', ?, ?)");
                 $stmt_log->execute([$op_id, $usuario_id, $auxiliares, $observacao]);
 
+                // Avisa a Formulação (setor inteiro), o PCP (só quem criou
+                // essa OP) e o Admin (tudo) que a separação foi concluída
+                // -- independente de já liberar pra produção ou não.
+                if ($dados_op) {
+                    notificar_setor($pdo, 'FORMULACAO', $op_id, 'OP_SEPARADA', "OP {$dados_op['op_sistema']} separada pelo Almoxarifado.");
+                    notificar_setor($pdo, 'ADMIN', $op_id, 'OP_SEPARADA', "OP {$dados_op['op_sistema']} separada pelo Almoxarifado.");
+                    if (!empty($dados_op['criador_id'])) {
+                        notificar_usuario($pdo, (int)$dados_op['criador_id'], $op_id, 'OP_SEPARADA', "OP {$dados_op['op_sistema']} separada pelo Almoxarifado.");
+                    }
+                }
+
+                // Se a Formulação já tinha terminado, essa confirmação
+                // acabou de liberar a OP -- avisa a linha que já pode
+                // iniciar, e o Admin que está acompanhando tudo.
+                if ($dados_op && !empty($dados_op['data_formulacao']) && !empty($dados_op['linha_id'])) {
+                    notificar_linha($pdo, (int)$dados_op['linha_id'], $op_id, 'OP_LIBERADA', "A OP {$dados_op['op_sistema']} foi liberada e já pode ser iniciada.");
+                    notificar_setor($pdo, 'ADMIN', $op_id, 'OP_LIBERADA', "OP {$dados_op['op_sistema']} liberada pra produção.");
+                }
+
                 $mensagem = "Separação confirmada com sucesso!";
                 $tipo_msg = 'sucesso';
             } elseif ($acao === 'estoque_insuficiente') {
@@ -67,6 +94,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
                 // acompanhamento (resolvida por fora do sistema).
                 $stmt_log = $pdo->prepare("INSERT INTO separacoes_almoxarifado (op_id, usuario_id, status, auxiliares_separacao, observacao) VALUES (?, ?, 'ESTOQUE_INSUFICIENTE', ?, ?)");
                 $stmt_log->execute([$op_id, $usuario_id, $auxiliares, $observacao]);
+
+                if ($dados_op && !empty($dados_op['criador_id'])) {
+                    notificar_usuario($pdo, (int)$dados_op['criador_id'], $op_id, 'PENDENCIA_ALMOXARIFADO', "Estoque insuficiente pra separar a OP {$dados_op['op_sistema']}: {$observacao}");
+                    notificar_setor($pdo, 'ADMIN', $op_id, 'PENDENCIA_ALMOXARIFADO', "Estoque insuficiente pra separar a OP {$dados_op['op_sistema']}: {$observacao}");
+                }
 
                 $mensagem = "Pendência registrada. A OP permanece na fila até nova confirmação.";
                 $tipo_msg = 'erro';
@@ -242,6 +274,24 @@ try {
     foreach ($linhas_da_fabrica as $l) if ($l['id'] == $linha_selecionada_id) $pertence = true;
     if (!$pertence) $linha_selecionada_id = $linhas_da_fabrica[0]['id'] ?? 0;
 
+    // Bolinha vermelha: quantas OPs aguardam especificamente o Almoxarifado
+    // (PROGRAMADO ou AGUARDANDO ALMOXARIFADO), por linha e por fábrica --
+    // pra sinalizar nas abas quem realmente tem trabalho pendente aqui.
+    $linhas_pendentes_almox = array_column(
+        $pdo->query("SELECT linha_id, COUNT(*) as qtd FROM ordens_producao WHERE status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO') AND linha_id IS NOT NULL GROUP BY linha_id")->fetchAll(PDO::FETCH_ASSOC),
+        'qtd', 'linha_id'
+    );
+    $fabricas_pendentes_almox = array_column(
+        $pdo->query("
+            SELECT l.fabrica, COUNT(op.id) as qtd
+            FROM ordens_producao op
+            JOIN linhas l ON op.linha_id = l.id
+            WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO')
+            GROUP BY l.fabrica
+        ")->fetchAll(PDO::FETCH_ASSOC),
+        'qtd', 'fabrica'
+    );
+
     // Mesma paleta de status usada em programacao_pcp.php -- render_op_card()
     // busca cor/label aqui pelo status normalizado da OP.
     $status_meta = [
@@ -385,8 +435,11 @@ try {
 
             <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-3 mt-2">
                 <?php foreach ($fabricas as $fab): ?>
-                    <a href="?fabrica=<?= $fab ?>" class="px-4 py-2 rounded-lg text-sm font-bold transition-colors <?= $fab == $fabrica_selecionada ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-100' ?>">
+                    <a href="?fabrica=<?= $fab ?>" class="relative px-4 py-2 rounded-lg text-sm font-bold transition-colors <?= $fab == $fabrica_selecionada ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-100' ?>">
                         Fábrica <?= $fab ?>
+                        <?php if (!empty($fabricas_pendentes_almox[$fab])): ?>
+                            <span class="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-rose-500 border-2 border-white" title="<?= $fabricas_pendentes_almox[$fab] ?> OP(s) aguardando o Almoxarifado"></span>
+                        <?php endif; ?>
                     </a>
                 <?php endforeach; ?>
             </div>
@@ -396,8 +449,11 @@ try {
                     <p class="text-sm text-slate-400 italic">Nenhuma linha cadastrada nesta fábrica.</p>
                 <?php endif; ?>
                 <?php foreach ($linhas_da_fabrica as $l): ?>
-                    <a href="?fabrica=<?= $fabrica_selecionada ?>&linha_id=<?= $l['id'] ?>" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide transition-colors border <?= $l['id'] == $linha_selecionada_id ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-blue-50 hover:border-blue-200' ?>">
+                    <a href="?fabrica=<?= $fabrica_selecionada ?>&linha_id=<?= $l['id'] ?>" class="relative px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide transition-colors border <?= $l['id'] == $linha_selecionada_id ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-blue-50 hover:border-blue-200' ?>">
                         <?= htmlspecialchars($l['login']) ?>
+                        <?php if (!empty($linhas_pendentes_almox[$l['id']])): ?>
+                            <span class="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-rose-500 border-2 border-white" title="<?= $linhas_pendentes_almox[$l['id']] ?> OP(s) aguardando o Almoxarifado"></span>
+                        <?php endif; ?>
                     </a>
                 <?php endforeach; ?>
             </div>

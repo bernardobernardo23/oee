@@ -1,6 +1,7 @@
 <?php
 session_start();
 require 'conexao.php';
+require_once 'notificacoes.php';
 
 // Segurança: só PCP/ADMIN reordenam a fila de prioridade
 if (!isset($_SESSION['tipo_acesso']) || $_SESSION['tipo_acesso'] !== 'usuario' || !in_array($_SESSION['setor'], ['PCP', 'ADMIN'])) {

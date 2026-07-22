@@ -1,6 +1,7 @@
 <?php
 session_start();
 require 'conexao.php';
+require_once 'notificacoes.php';
 if (!isset($_SESSION['linha_id']) || ($_SESSION['tipo_acesso'] ?? null) !== 'linha') {
     header("Location: index.php");
     exit;
