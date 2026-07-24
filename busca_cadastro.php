@@ -4,7 +4,11 @@ require 'conexao.php';
 
 header('Content-Type: application/json');
 
-if (!isset($_SESSION['tipo_acesso']) || $_SESSION['tipo_acesso'] !== 'usuario' || $_SESSION['setor'] !== 'ADMIN') {
+$tipo_acesso = $_SESSION['tipo_acesso'] ?? null;
+$eh_admin = $tipo_acesso === 'usuario' && ($_SESSION['setor'] ?? '') === 'ADMIN';
+$eh_linha = $tipo_acesso === 'linha';
+
+if (!$eh_admin && !$eh_linha) {
     http_response_code(401);
     echo json_encode(['ok' => false, 'erro' => 'Não autenticado.']);
     exit;
@@ -12,6 +16,13 @@ if (!isset($_SESSION['tipo_acesso']) || $_SESSION['tipo_acesso'] !== 'usuario' |
 
 $tipo = $_GET['tipo'] ?? '';
 $termo = trim($_GET['termo'] ?? '');
+
+// Operador de linha só pode buscar insumos (pra registrar perda) --
+// não tem motivo pra expor o cadastro de produtos acabados pra ele.
+if ($eh_linha && $tipo !== 'componente') {
+    echo json_encode(['ok' => true, 'itens' => []]);
+    exit;
+}
 
 if (!in_array($tipo, ['produto', 'componente'], true) || strlen($termo) < 2) {
     echo json_encode(['ok' => true, 'itens' => []]);

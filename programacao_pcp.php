@@ -186,8 +186,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
 
 try {
     // Busca dados base
-    $linhas_dropdown = $pdo->query("SELECT id, login, fabrica FROM linhas WHERE fabrica > 0 ORDER BY fabrica ASC, login ASC")->fetchAll(PDO::FETCH_ASSOC);
+    $linhas_dropdown = $pdo->query("SELECT id, login, fabrica, capacidade_dia FROM linhas WHERE fabrica > 0 ORDER BY fabrica ASC, login ASC")->fetchAll(PDO::FETCH_ASSOC);
     $fabricas = array_unique(array_column($linhas_dropdown, 'fabrica'));
+
+    // Quanto já foi programado HOJE (data_planejada = hoje) por linha,
+    // pra comparar com a capacidade diária dela (ex: 10.000/20.000).
+    // Ignora OPs canceladas -- essas não vão consumir capacidade de verdade.
+    $programado_hoje_por_linha = array_column(
+        $pdo->query("
+            SELECT op.linha_id, SUM(op_p.quantidade_planejada) AS total
+            FROM ordens_producao op
+            JOIN op_produtos op_p ON op_p.op_id = op.id
+            WHERE op.data_planejada = CURDATE() AND op.status != 'CANCELADO' AND op.linha_id IS NOT NULL
+            GROUP BY op.linha_id
+        ")->fetchAll(PDO::FETCH_ASSOC),
+        'total', 'linha_id'
+    );
+
+    // Totais de Hoje / Atrasada / Futura -- global e por fábrica, pros
+    // 3 cards no topo da Visão Global e no topo de cada fábrica.
+    // "Atrasada" exclui o que já foi finalizado (não tem mais sentido
+    // chamar de atrasado algo que já foi produzido, mesmo que tarde).
+    $stmt_metricas = $pdo->query("
+        SELECT
+            l.fabrica,
+            SUM(CASE WHEN op.data_planejada = CURDATE() AND op.status != 'CANCELADO' THEN op_p.quantidade_planejada ELSE 0 END) AS hoje,
+            SUM(CASE WHEN op.data_planejada < CURDATE() AND op.status NOT IN ('PRODUCAO FINALIZADA', 'CANCELADO') THEN op_p.quantidade_planejada ELSE 0 END) AS atrasada,
+            SUM(CASE WHEN op.data_planejada > CURDATE() AND op.status != 'CANCELADO' THEN op_p.quantidade_planejada ELSE 0 END) AS futura
+        FROM ordens_producao op
+        JOIN op_produtos op_p ON op_p.op_id = op.id
+        JOIN linhas l ON l.id = op.linha_id
+        GROUP BY l.fabrica
+    ");
+    $metricas_por_fabrica = [];
+    $metricas_globais = ['hoje' => 0, 'atrasada' => 0, 'futura' => 0];
+    foreach ($stmt_metricas->fetchAll(PDO::FETCH_ASSOC) as $linha_metrica) {
+        $metricas_por_fabrica[$linha_metrica['fabrica']] = [
+            'hoje' => (int)$linha_metrica['hoje'],
+            'atrasada' => (int)$linha_metrica['atrasada'],
+            'futura' => (int)$linha_metrica['futura'],
+        ];
+        $metricas_globais['hoje'] += (int)$linha_metrica['hoje'];
+        $metricas_globais['atrasada'] += (int)$linha_metrica['atrasada'];
+        $metricas_globais['futura'] += (int)$linha_metrica['futura'];
+    }
+
+    // Mesmas 3 métricas, mas por LINHA individual (não só por fábrica) --
+    // versão mais discreta, mostrada quando uma linha específica é selecionada.
+    $metricas_por_linha = array_column(
+        $pdo->query("
+            SELECT
+                op.linha_id,
+                SUM(CASE WHEN op.data_planejada = CURDATE() AND op.status != 'CANCELADO' THEN op_p.quantidade_planejada ELSE 0 END) AS hoje,
+                SUM(CASE WHEN op.data_planejada < CURDATE() AND op.status NOT IN ('PRODUCAO FINALIZADA', 'CANCELADO') THEN op_p.quantidade_planejada ELSE 0 END) AS atrasada,
+                SUM(CASE WHEN op.data_planejada > CURDATE() AND op.status != 'CANCELADO' THEN op_p.quantidade_planejada ELSE 0 END) AS futura
+            FROM ordens_producao op
+            JOIN op_produtos op_p ON op_p.op_id = op.id
+            WHERE op.linha_id IS NOT NULL
+            GROUP BY op.linha_id
+        ")->fetchAll(PDO::FETCH_ASSOC),
+        null, 'linha_id'
+    );
 
     $status_meta = [
         'PROGRAMADO'              => ['label' => 'Programado',            'cor' => 'pink'],
@@ -315,14 +374,14 @@ try {
             </div>
         </div>
 
-        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-3">
+        <div class="flex flex-wrap gap-3">
             <?php foreach ($status_meta as $nome => $meta): $cor = $meta['cor']; ?>
-                <div class="bg-<?= $cor ?>-100 rounded-lg px-4 py-4 border border-<?= $cor ?>-200 shadow-sm">
-                    <div class="flex items-center gap-2">
-                        <span class="w-2 h-2 rounded-full bg-<?= $cor ?>-500 shrink-0"></span>
-                        <span class="text-[11px] font-bold uppercase tracking-widest text-<?= $cor ?>-800 truncate"><?= $meta['label'] ?></span>
+                <div class="flex-1 min-w-[150px] bg-<?= $cor ?>-100 rounded-xl p-4 border border-<?= $cor ?>-200 shadow-sm flex flex-col justify-between">
+                    <div class="flex items-start gap-2 mb-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-<?= $cor ?>-500 shrink-0 mt-0.5"></span>
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-<?= $cor ?>-800 leading-snug"><?= $meta['label'] ?></span>
                     </div>
-                    <div class="font-mono text-3xl font-extrabold text-<?= $cor ?>-900 mt-2 tabular-nums"><?= str_pad($count_status[$nome], 2, '0', STR_PAD_LEFT) ?></div>
+                    <div class="font-mono text-3xl font-black text-<?= $cor ?>-900 tabular-nums leading-none"><?= str_pad($count_status[$nome], 2, '0', STR_PAD_LEFT) ?></div>
                 </div>
             <?php endforeach; ?>
         </div>
@@ -379,6 +438,16 @@ try {
             </form>
 
             <div id="box_planilha" class="p-6 hidden">
+                <div class="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <p class="text-xs text-slate-600 font-medium">Não sabe o formato esperado? Baixe o modelo antes de montar sua planilha.</p>
+                    </div>
+                    <a href="modelo_importacao_ops.xlsx" download class="shrink-0 inline-flex items-center gap-1.5 bg-white border border-slate-300 text-slate-700 hover:border-emerald-400 hover:text-emerald-700 font-bold text-xs px-3 py-2 rounded-lg transition-colors">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        Baixar Modelo (.xlsx)
+                    </a>
+                </div>
                 <form action="importa_planilha.php" method="POST" enctype="multipart/form-data" class="flex flex-col sm:flex-row gap-4">
                     <input type="file" name="arquivo_excel" id="input_excel_file" accept=".xlsx" required class="hidden">
                     <label for="input_excel_file" id="btn_excel_label" class="flex-1 border-2 border-dashed border-slate-300 hover:border-emerald-400 bg-slate-50 rounded-xl cursor-pointer flex flex-col items-center justify-center p-6 transition-colors">
@@ -406,10 +475,60 @@ try {
                 </button>
             </div>
 
+            <!-- MÉTRICAS GLOBAIS: total programado hoje / atrasado / futuro -->
+            <div id="metricas_globais" class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+                <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                    <span class="block text-[10px] font-bold uppercase tracking-widest text-blue-700 mb-1">Programado Hoje</span>
+                    <span class="block text-2xl font-black text-blue-900" id="metrica_global_hoje">0</span>
+                </div>
+                <div class="bg-rose-50 border border-rose-200 rounded-xl p-4">
+                    <span class="block text-[10px] font-bold uppercase tracking-widest text-rose-700 mb-1">Programação Atrasada</span>
+                    <span class="block text-2xl font-black text-rose-900" id="metrica_global_atrasada">0</span>
+                </div>
+                <div class="bg-slate-100 border border-slate-200 rounded-xl p-4">
+                    <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-600 mb-1">Programação Futura</span>
+                    <span class="block text-2xl font-black text-slate-800" id="metrica_global_futura">0</span>
+                </div>
+            </div>
+
+            <!-- MÉTRICAS POR FÁBRICA: uma por fábrica, JS mostra só a da fábrica selecionada -->
+            <?php foreach ($fabricas as $fab): ?>
+                <div id="metricas_fabrica_<?= $fab ?>" class="metricas-fabrica hidden grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                        <span class="block text-[10px] font-bold uppercase tracking-widest text-blue-700 mb-1">Fábrica <?= $fab ?> · Programado Hoje</span>
+                        <span class="block text-2xl font-black text-blue-900"><?= number_format($metricas_por_fabrica[$fab]['hoje'] ?? 0, 0, ',', '.') ?></span>
+                    </div>
+                    <div class="bg-rose-50 border border-rose-200 rounded-xl p-4">
+                        <span class="block text-[10px] font-bold uppercase tracking-widest text-rose-700 mb-1">Fábrica <?= $fab ?> · Atrasada</span>
+                        <span class="block text-2xl font-black text-rose-900"><?= number_format($metricas_por_fabrica[$fab]['atrasada'] ?? 0, 0, ',', '.') ?></span>
+                    </div>
+                    <div class="bg-slate-100 border border-slate-200 rounded-xl p-4">
+                        <span class="block text-[10px] font-bold uppercase tracking-widest text-slate-600 mb-1">Fábrica <?= $fab ?> · Futura</span>
+                        <span class="block text-2xl font-black text-slate-800"><?= number_format($metricas_por_fabrica[$fab]['futura'] ?? 0, 0, ',', '.') ?></span>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+
             <div id="container_linhas" class="flex flex-wrap gap-2 mb-6 hidden">
-                <?php foreach ($linhas_dropdown as $l): ?>
-                    <button type="button" onclick="selecionarLinha(<?= $l['id'] ?>)" id="btn_linha_<?= $l['id'] ?>" data-fabrica="<?= $l['fabrica'] ?>" class="btn-linha relative px-4 py-2 rounded-lg text-xs font-bold uppercase transition-colors border bg-white text-slate-600 border-slate-200 hover:bg-blue-50 hidden">
-                        <?= htmlspecialchars($l['login']) ?>
+                <?php foreach ($linhas_dropdown as $l):
+                    $programado_linha = $programado_hoje_por_linha[$l['id']] ?? 0;
+                    $capacidade_linha = (int)$l['capacidade_dia'];
+                    $pct_capacidade = $capacidade_linha > 0 ? ($programado_linha / $capacidade_linha) * 100 : 0;
+                    // Verde/neutro até 85%, amarelo perto do limite, vermelho
+                    // passou da capacidade -- dá uma ideia rápida de "dá pra
+                    // encaixar mais OP nessa linha hoje ou já tá no talo".
+                    if ($pct_capacidade > 100) {
+                        $cor_capacidade = 'text-rose-600';
+                    } elseif ($pct_capacidade >= 85) {
+                        $cor_capacidade = 'text-amber-600';
+                    } else {
+                        $cor_capacidade = 'text-slate-400';
+                    }
+                ?>
+                    <button type="button" onclick="selecionarLinha(<?= $l['id'] ?>)" id="btn_linha_<?= $l['id'] ?>" data-fabrica="<?= $l['fabrica'] ?>" class="btn-linha relative px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all duration-200 border bg-white text-slate-500 border-slate-200 hover:bg-slate-100 hover:text-slate-800 hidden">    <span class="block"><?= htmlspecialchars($l['login']) ?></span>
+                        <?php if ($capacidade_linha > 0): ?>
+                            <span class="block text-[9px] font-black normal-case tracking-normal <?= $cor_capacidade ?>" title="Programado hoje / Capacidade diária"><?= number_format($programado_linha, 0, ',', '.') ?>/<?= number_format($capacidade_linha, 0, ',', '.') ?></span>
+                        <?php endif; ?>
                         <?php if (!empty($ops_esteira[$l['id']])): ?>
                             <span class="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-rose-500 border-2 border-white" title="<?= count($ops_esteira[$l['id']]) ?> OP(s) em aberto"></span>
                         <?php endif; ?>
@@ -432,6 +551,14 @@ try {
 
                 <?php foreach ($linhas_dropdown as $l): $lid = $l['id']; ?>
                     <div id="bloco_esteira_<?= $lid ?>" class="bloco-esteira hidden" data-linha-id="<?= $lid ?>">
+                        <?php $m_linha = $metricas_por_linha[$lid] ?? ['hoje' => 0, 'atrasada' => 0, 'futura' => 0]; ?>
+                        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-500 mb-3 pb-3 border-b border-slate-100">
+                            <span>Hoje: <strong class="text-slate-700"><?= number_format((int)$m_linha['hoje'], 0, ',', '.') ?></strong></span>
+                            <span class="text-slate-300">·</span>
+                            <span>Atrasada: <strong class="<?= (int)$m_linha['atrasada'] > 0 ? 'text-rose-600' : 'text-slate-700' ?>"><?= number_format((int)$m_linha['atrasada'], 0, ',', '.') ?></strong></span>
+                            <span class="text-slate-300">·</span>
+                            <span>Futura: <strong class="text-slate-700"><?= number_format((int)$m_linha['futura'], 0, ',', '.') ?></strong></span>
+                        </div>
                         <?php if (empty($ops_esteira[$lid])): ?>
                             <div class="text-center p-8 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-semibold text-sm">Fila vazia para esta máquina.</div>
                         <?php else: ?>
@@ -446,9 +573,21 @@ try {
             </div>
 
             <div id="view_global" class="bg-white rounded-xl shadow-sm border border-slate-200/60 p-5 hidden">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                    <input type="text" id="filtro_op" onkeyup="aplicarFiltrosGlobal()" placeholder="Buscar por OP..." class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100">
-                    <input type="text" id="filtro_produto" onkeyup="aplicarFiltrosGlobal()" placeholder="Buscar por Produto..." class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
+                        <input type="text" id="filtro_op" onkeyup="aplicarFiltrosGlobal()" placeholder="Buscar por OP..." class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100">
+                        <input type="text" id="filtro_produto" onkeyup="aplicarFiltrosGlobal()" placeholder="Buscar por Produto..." class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100">
+                    </div>
+                    <div class="flex gap-2 shrink-0">
+                        <button type="button" onclick="exportarFiltro('pdf')" title="Exportar PDF com os filtros atuais" class="flex items-center gap-1.5 bg-white border border-slate-300 hover:border-rose-400 hover:text-rose-600 text-slate-600 font-bold text-xs px-3 py-2 rounded-lg transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            PDF
+                        </button>
+                        <button type="button" onclick="exportarFiltro('xlsx')" title="Exportar planilha com os filtros atuais" class="flex items-center gap-1.5 bg-white border border-slate-300 hover:border-emerald-400 hover:text-emerald-600 text-slate-600 font-bold text-xs px-3 py-2 rounded-lg transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                            Planilha
+                        </button>
+                    </div>
                 </div>
                 <div class="flex flex-wrap gap-3 mb-6">
                     <?php foreach ($status_meta as $nome => $meta): $cor = $meta['cor']; ?>
@@ -567,6 +706,36 @@ try {
         });
 
         // ----------------------------------------------------
+        // MÉTRICAS: total programado hoje / atrasado / futuro
+        // (globais já calculadas no PHP; ao trocar de fábrica, só troca
+        // qual bloco fica visível -- todos vêm pré-renderizados)
+        // ----------------------------------------------------
+        const metricasGlobais = <?= json_encode([
+            'hoje' => (int)($metricas_globais['hoje'] ?? 0),
+            'atrasada' => (int)($metricas_globais['atrasada'] ?? 0),
+            'futura' => (int)($metricas_globais['futura'] ?? 0),
+        ]) ?>;
+
+        function formatarNumero(n) {
+            return n.toLocaleString('pt-BR');
+        }
+
+        function mostrarMetricasGlobais() {
+            document.getElementById('metrica_global_hoje').textContent = formatarNumero(metricasGlobais.hoje);
+            document.getElementById('metrica_global_atrasada').textContent = formatarNumero(metricasGlobais.atrasada);
+            document.getElementById('metrica_global_futura').textContent = formatarNumero(metricasGlobais.futura);
+            document.getElementById('metricas_globais').classList.remove('hidden');
+            document.querySelectorAll('.metricas-fabrica').forEach(el => el.classList.add('hidden'));
+        }
+
+        function mostrarMetricasFabrica(fabrica) {
+            document.getElementById('metricas_globais').classList.add('hidden');
+            document.querySelectorAll('.metricas-fabrica').forEach(el => el.classList.add('hidden'));
+            const bloco = document.getElementById('metricas_fabrica_' + fabrica);
+            if (bloco) bloco.classList.remove('hidden');
+        }
+
+        // ----------------------------------------------------
         // NAVEGAÇÃO FLUIDA (SPA)
         // ----------------------------------------------------
         function resetarAbas() {
@@ -587,6 +756,7 @@ try {
                 tab.classList.remove('bg-white', 'text-slate-500');
                 tab.classList.add('bg-slate-800', 'text-white');
                 document.getElementById('view_global').classList.remove('hidden');
+                mostrarMetricasGlobais();
             } else {
                 const tab = document.getElementById('tab_fabrica_' + fabrica);
                 tab.classList.remove('bg-white', 'text-slate-500');
@@ -594,6 +764,7 @@ try {
                 
                 document.getElementById('container_linhas').classList.remove('hidden');
                 document.getElementById('view_esteira').classList.remove('hidden');
+                mostrarMetricasFabrica(fabrica);
 
                 let primeiraLinha = null;
                 document.querySelectorAll('.btn-linha').forEach(b => {
@@ -609,18 +780,24 @@ try {
         }
 
         function selecionarLinha(id) {
+            // Remove o estado "Ativo" (borda escura) de todos os botões e devolve o estado padrão
             document.querySelectorAll('.btn-linha').forEach(b => {
-                b.classList.remove('bg-blue-600', 'text-white', 'border-blue-600');
-                b.classList.add('bg-white', 'text-slate-600', 'border-slate-200');
+                b.classList.remove('border-slate-800', 'text-slate-900', 'bg-slate-50', 'ring-1', 'ring-slate-800', 'shadow-sm');
+                b.classList.add('bg-white', 'text-slate-500', 'border-slate-200');
             });
-            document.getElementById('btn_linha_' + id).classList.add('bg-blue-600', 'text-white', 'border-blue-600');
             
+            // Adiciona o estado "Ativo" (borda e texto escuros, fundo leve) ao botão clicado
+            const btnLinha = document.getElementById('btn_linha_' + id);
+            if (btnLinha) {
+                btnLinha.classList.add('border-slate-800', 'text-slate-900', 'bg-slate-50', 'ring-1', 'ring-slate-800', 'shadow-sm');
+                btnLinha.classList.remove('bg-white', 'text-slate-500', 'border-slate-200');
+            }
+            
+            // Exibe a esteira correspondente
             document.querySelectorAll('.bloco-esteira').forEach(b => b.classList.add('hidden'));
             document.getElementById('bloco_esteira_' + id).classList.remove('hidden');
 
-            // Limpa o filtro local ao trocar de linha, pra não parecer que a
-            // fila da nova linha está "faltando" cards por causa de um termo
-            // digitado enquanto se olhava outra linha.
+            // Limpa o filtro local
             document.getElementById('filtro_esteira_op').value = '';
             document.getElementById('filtro_esteira_produto').value = '';
             aplicarFiltroEsteira();
@@ -751,7 +928,10 @@ try {
             if (inputOrigemAtual) {
                 inputOrigemAtual.value = codigo;
                 document.getElementById('modal_buscador_mes').close();
-                inputOrigemAtual.blur();
+                // Chama a busca direto -- não dá pra confiar em .blur()
+                // disparar o evento, porque esse campo nunca teve foco de
+                // verdade (o foco foi pro campo de busca da modal).
+                buscarPA(inputOrigemAtual);
             }
         }
 
@@ -863,6 +1043,20 @@ try {
                 }
             });
             document.getElementById('msg_vazio_global').classList.toggle('hidden', visiveis > 0);
+        }
+
+        // ----------------------------------------------------
+        // EXPORTAR (PDF / PLANILHA) COM OS FILTROS ATUAIS
+        // ----------------------------------------------------
+        function exportarFiltro(formato) {
+            const params = new URLSearchParams();
+            params.set('formato', formato);
+            const tOp = document.getElementById('filtro_op').value.trim();
+            const tProd = document.getElementById('filtro_produto').value.trim();
+            if (tOp) params.set('op', tOp);
+            if (tProd) params.set('produto', tProd);
+            statusGlobais.forEach(s => params.append('status[]', s));
+            window.location.href = 'exportar_pcp.php?' + params.toString();
         }
     </script>
 </body>
