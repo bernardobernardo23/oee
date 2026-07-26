@@ -180,6 +180,8 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Raio-X da Linha - MES/OEE</title>
+        <link rel="icon" type="image/png" href="logo.png">
+
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;900&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -227,7 +229,7 @@ try {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path>
                     </svg>
                 </div>
-                <h2 class="text-2xl font-black text-gray-800 mb-2">Nenhum Apontamento no Dia</h2>
+                <h2 class="text-2xl font-black text-gray-800 mb-2">Nenhum Dado no Dia</h2>
                 <p class="text-gray-500 max-w-md mx-auto">A Linha <strong><?= strtoupper($linhaInfo['login']) ?></strong> não possui registros para <strong><?= date('d/m/Y', strtotime($data_filtro)) ?></strong>.</p>
             </div>
         <?php else: ?>

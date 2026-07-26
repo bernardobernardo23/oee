@@ -219,7 +219,7 @@ try {
                 <h2 class="text-2xl font-bold text-slate-800 mt-2 tracking-tight">Master Data (Cadastros)</h2>
                 <p class="text-sm text-slate-500 font-medium">Faça a gestão dos catálogos de fábrica, produtos e paradas do sistema OEE.</p>
             </div>
-            <a href="dashboard_gerencial.php" class="bg-slate-800 hover:bg-black text-white font-bold py-2.5 px-5 rounded-lg text-sm transition-all shadow-sm flex items-center gap-2">
+            <a href="dashboard_admin.php" class="bg-slate-800 hover:bg-black text-white font-bold py-2.5 px-5 rounded-lg text-sm transition-all shadow-sm flex items-center gap-2">
                 <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
                 </svg>
@@ -272,8 +272,8 @@ try {
                     <div class="space-y-4">
                         <div>
                             <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">Login da Máquina</label>
-                            <input type="text" name="login" required placeholder="Ex: l1f1" class="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-purple-100 focus:border-purple-400 bg-slate-50 focus:bg-white transition-colors lowercase">
-                            <p class="text-[10px] text-slate-400 mt-1">O login vira o nome de exibição da linha no sistema todo (ex: L1F1).</p>
+                            <input type="text" name="login" required placeholder="Ex: f1l1" class="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-purple-100 focus:border-purple-400 bg-slate-50 focus:bg-white transition-colors lowercase">
+                            <p class="text-[10px] text-slate-400 mt-1">O login vira o nome de exibição da linha no sistema todo (ex: F1L1).</p>
                         </div>
                         <div>
                             <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">Senha p/ Operador</label>

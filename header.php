@@ -114,10 +114,18 @@ if ($sino_com_abas) {
                     </div>
                 </div>
             </div>
+       <?php endif; ?>
+
+        <!-- Botão exclusivo para ADMIN (Voltar ao Dashboard) -->
+        <?php if (isset($_SESSION['tipo_acesso']) && $_SESSION['tipo_acesso'] === 'usuario' && isset($_SESSION['setor']) && $_SESSION['setor'] === 'ADMIN'): ?>
+            <a href="dashboard_admin.php" title="Painel Gerencial" class="group flex items-center justify-center w-10 h-10 rounded-full bg-gray-50 hover:bg-emerald-50 border border-transparent hover:border-emerald-200 transition-all duration-300 shadow-sm hover:shadow shrink-0">
+                <svg class="w-5 h-5 text-gray-400 group-hover:text-emerald-600 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                </svg>
+            </a>
         <?php endif; ?>
 
-        <a href="logout.php" title="Sair do Sistema" class="group flex items-center justify-center w-10 h-10 rounded-full bg-gray-50 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all duration-300 shadow-sm hover:shadow">
-            <svg class="w-5 h-5 text-gray-400 group-hover:text-red-600 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <a href="logout.php" title="Sair do Sistema" class="group flex items-center justify-center w-10 h-10 rounded-full bg-gray-50 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all duration-300 shadow-sm hover:shadow shrink-0">   <svg class="w-5 h-5 text-gray-400 group-hover:text-red-600 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
             </svg>
         </a>

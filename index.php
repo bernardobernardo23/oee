@@ -2,6 +2,11 @@
 session_start();
 require 'conexao.php';
 
+// O redirect de erro (mais abaixo) manda "?erro=..." na URL, mas isso
+// nunca era lido de volta em $erro -- por isso o aviso nunca aparecia,
+// mesmo com login/senha errados.
+$erro = $_GET['erro'] ?? null;
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $login_digitado = trim($_POST['login']);
     $senha_digitada = $_POST['senha'];
@@ -50,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 
     // Se chegou até aqui, errou o login ou a senha em ambos
-    header("Location: index.php?erro=Login ou senha incorretos.");
+    header("Location: index.php?erro=" . urlencode("Login ou senha incorretos."));
     exit;
 }
 ?>
@@ -77,10 +82,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
         }
     </script>
+    <style>
+        /* Leve "balanço" no card inteiro quando o login falha -- reforça
+           visualmente o erro além do texto, sem ser agressivo demais. */
+        @keyframes shake-erro {
+            10%, 90% { transform: translateX(-1px); }
+            20%, 80% { transform: translateX(2px); }
+            30%, 50%, 70% { transform: translateX(-4px); }
+            40%, 60% { transform: translateX(4px); }
+        }
+        .shake-erro {
+            animation: shake-erro 0.5s cubic-bezier(.36,.07,.19,.97) both;
+        }
+    </style>
 </head>
 <body class="bg-gray-100 min-h-screen font-sans flex items-center justify-center p-4">
 
-    <div class="bg-white p-8 md:p-12 rounded-2xl shadow-xl w-full max-w-md border border-gray-200">
+    <div class="bg-white p-8 md:p-12 rounded-2xl shadow-xl w-full max-w-md border <?= $erro ? 'border-red-300 shake-erro' : 'border-gray-200' ?>">
         
         <div class="text-center mb-10">
             <img src="logo.png" alt="Chesiquimica" class="h-16 w-auto mx-auto object-contain mb-4">
@@ -90,27 +108,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             </h2>
         </div>
 
-        <?php if (isset($erro)): ?>
-            <div class="bg-red-50 border-l-4 border-red-500 text-red-700 p-3 rounded mb-6 text-sm font-medium animate-pulse">
-                <?= $erro ?>
+        <?php if ($erro): ?>
+            <div class="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl mb-6 text-sm font-bold flex items-center gap-3">
+                <svg class="w-6 h-6 text-red-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <span><?= htmlspecialchars($erro) ?></span>
             </div>
         <?php endif; ?>
 
         <form method="post" class="space-y-6">
             <div>
                 <label class="block text-sm font-semibold text-gray-700 mb-1.5">Identificação da Linha</label>
-                <input type="text" name="login" required placeholder="Ex: l1f1" autocomplete="off"
-                    class="w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm
+                <input type="text" name="login" required placeholder="Ex: f1l1" autocomplete="off"
+                    class="w-full px-4 py-3 border rounded-lg shadow-sm
                            focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400
-                           transition duration-150">
+                           transition duration-150 <?= $erro ? 'border-red-300 bg-red-50/30' : 'border-gray-300' ?>">
             </div>
 
             <div>
                 <label class="block text-sm font-semibold text-gray-700 mb-1.5">Senha</label>
                 <input type="password" name="senha" required placeholder="••••••••"
-                    class="w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm
+                    class="w-full px-4 py-3 border rounded-lg shadow-sm
                            focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400
-                           transition duration-150">
+                           transition duration-150 <?= $erro ? 'border-red-300 bg-red-50/30' : 'border-gray-300' ?>">
             </div>
 
             <button type="submit"
@@ -121,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         </form>
 
         <div class="mt-10 pt-6 border-t border-gray-200 text-center text-xs text-gray-400 font-medium">
-            © <?= date('Y') ?> TI CHESIQUIMICA - PONTA GROSSA
+            © <?= date('Y') ?> Bernardo de Lima da Silva - Chesiquimica
         </div>
     </div>
 
