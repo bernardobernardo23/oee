@@ -59,8 +59,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
                         auxiliares_separacao = ?, 
                         observacao_almoxarifado = ?,
                         data_separacao = NOW(),
-                        status = CASE WHEN data_formulacao IS NOT NULL THEN 'AGUARDANDO INICIO' ELSE 'AGUARDANDO FORMULACAO' END
-                    WHERE id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO')
+                        status = CASE WHEN data_formulacao IS NOT NULL THEN 'AGUARDANDO INICIO' ELSE 'AGUARDANDO FORMULACAO' END,
+                        status_anterior = NULL
+                    WHERE id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO', 'PENDENCIA')
                 ");
                 $stmt_update->execute([$usuario_id, $auxiliares, $observacao, $op_id]);
 
@@ -89,9 +90,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
                 $mensagem = "Separação confirmada com sucesso!";
                 $tipo_msg = 'sucesso';
             } elseif ($acao === 'estoque_insuficiente') {
-                // NÃO altera o status da OP -- ela continua na fila do Almoxarifado
-                // até nova confirmação, com a pendência registrada para
-                // acompanhamento (resolvida por fora do sistema).
+                // Salva o status atual em status_anterior ANTES de sobrescrever
+                // -- é o que permite voltar pro ponto certo do pipeline quando
+                // a pendência for resolvida (não sobrescreve status_anterior se
+                // a OP já estava em PENDENCIA, senão perderíamos o valor original
+                // numa segunda tentativa fracassada seguida).
+                $pdo->prepare("
+                    UPDATE ordens_producao
+                    SET status_anterior = IF(status = 'PENDENCIA', status_anterior, status),
+                        status = 'PENDENCIA'
+                    WHERE id = ?
+                ")->execute([$op_id]);
+
                 $stmt_log = $pdo->prepare("INSERT INTO separacoes_almoxarifado (op_id, usuario_id, status, auxiliares_separacao, observacao) VALUES (?, ?, 'ESTOQUE_INSUFICIENTE', ?, ?)");
                 $stmt_log->execute([$op_id, $usuario_id, $auxiliares, $observacao]);
 
@@ -100,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
                     notificar_setor($pdo, 'ADMIN', $op_id, 'PENDENCIA_ALMOXARIFADO', "Estoque insuficiente pra separar a OP {$dados_op['op_sistema']}: {$observacao}");
                 }
 
-                $mensagem = "Pendência registrada. A OP permanece na fila até nova confirmação.";
+                $mensagem = "Pendência registrada. A OP foi marcada como Pendência e vai aparecer nesse filtro pro PCP até ser resolvida.";
                 $tipo_msg = 'erro';
             }
 
@@ -278,7 +288,7 @@ try {
     // (PROGRAMADO ou AGUARDANDO ALMOXARIFADO), por linha e por fábrica --
     // pra sinalizar nas abas quem realmente tem trabalho pendente aqui.
     $linhas_pendentes_almox = array_column(
-        $pdo->query("SELECT linha_id, COUNT(*) as qtd FROM ordens_producao WHERE status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO') AND linha_id IS NOT NULL GROUP BY linha_id")->fetchAll(PDO::FETCH_ASSOC),
+        $pdo->query("SELECT linha_id, COUNT(*) as qtd FROM ordens_producao WHERE status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO', 'PENDENCIA') AND linha_id IS NOT NULL GROUP BY linha_id")->fetchAll(PDO::FETCH_ASSOC),
         'qtd', 'linha_id'
     );
     $fabricas_pendentes_almox = array_column(
@@ -286,7 +296,7 @@ try {
             SELECT l.fabrica, COUNT(op.id) as qtd
             FROM ordens_producao op
             JOIN linhas l ON op.linha_id = l.id
-            WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO')
+            WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO', 'PENDENCIA')
             GROUP BY l.fabrica
         ")->fetchAll(PDO::FETCH_ASSOC),
         'qtd', 'fabrica'
@@ -316,7 +326,7 @@ try {
         LEFT JOIN linhas l ON op.linha_id = l.id
         LEFT JOIN (" . sql_ultima_tentativa_almoxarifado() . ") sa ON sa.op_id = op.id
         LEFT JOIN (" . sql_ultima_tentativa_formulacao() . ") sf ON sf.op_id = op.id
-        WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO') AND op.linha_id = ?
+        WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO', 'PENDENCIA') AND op.linha_id = ?
         ORDER BY op.ordem_fila ASC, op.id ASC
     ");
     $stmt_ops->execute([$linha_selecionada_id]);
@@ -324,7 +334,7 @@ try {
     foreach ($detalhes_ops as &$op) $op['produtos'] = buscar_produtos_op($pdo, $op['id']);
     unset($op);
 
-    $total_pendentes_geral = (int)$pdo->query("SELECT COUNT(*) FROM ordens_producao WHERE status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO')")->fetchColumn();
+    $total_pendentes_geral = (int)$pdo->query("SELECT COUNT(*) FROM ordens_producao WHERE status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO', 'PENDENCIA')")->fetchColumn();
 
     // ========================================================================
     // 3. PENDÊNCIAS ABERTAS (global, qualquer linha)
@@ -341,7 +351,7 @@ try {
         LEFT JOIN (" . sql_ultima_tentativa_formulacao() . ") sf ON sf.op_id = op.id
         LEFT JOIN separacoes_almoxarifado sa_full ON sa_full.op_id = op.id AND sa_full.created_at = sa.created_at
         LEFT JOIN usuarios u ON sa_full.usuario_id = u.id
-        WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO')
+        WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO ALMOXARIFADO', 'PENDENCIA')
         ORDER BY sa.created_at ASC
     ");
     $pendencias_abertas = $stmt_pend->fetchAll(PDO::FETCH_ASSOC);
@@ -371,6 +381,8 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Almoxarifado - Separação de Insumos</title>
+    <link rel="icon" type="image/png" href="logo.png">
+
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;900&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>

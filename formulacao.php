@@ -29,12 +29,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
         $auxiliares = trim($_POST['auxiliares_formulacao'] ?? '');
         $observacao = trim($_POST['observacao_formulacao'] ?? '');
         $acao       = $_POST['acao'];
-        $motivo     = $_POST['motivo_pendencia'] ?? null;
 
-        if ($acao === 'pendencia' && ($observacao === '' || !array_key_exists($motivo, $motivos_pendencia_labels))) {
-            // Trava de segurança do lado do servidor: motivo + observação são
-            // obrigatórios para registrar uma pendência.
-            $mensagem = "Selecione o motivo e descreva a pendência antes de salvar.";
+        if ($acao === 'pendencia' && $observacao === '') {
+            // Trava de segurança do lado do servidor: a descrição da
+            // pendência é obrigatória pra registrar.
+            $mensagem = "Descreva a pendência antes de salvar.";
             $tipo_msg = 'erro';
         } else {
             // Dados da OP pra decidir quem notificar -- buscados ANTES de
@@ -55,8 +54,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
                         auxiliares_formulacao = ?,
                         observacao_formulacao = ?,
                         data_formulacao = NOW(),
-                        status = CASE WHEN data_separacao IS NOT NULL THEN 'AGUARDANDO INICIO' ELSE 'AGUARDANDO ALMOXARIFADO' END
-                    WHERE id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO')
+                        status = CASE WHEN data_separacao IS NOT NULL THEN 'AGUARDANDO INICIO' ELSE 'AGUARDANDO ALMOXARIFADO' END,
+                        status_anterior = NULL
+                    WHERE id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'PENDENCIA')
                 ");
                 $stmt_update->execute([$usuario_id, $auxiliares, $observacao, $op_id]);
 
@@ -85,19 +85,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op_id']) && isset($_P
                 $mensagem = "Formulação confirmada com sucesso!";
                 $tipo_msg = 'sucesso';
             } elseif ($acao === 'pendencia') {
-                // NÃO altera o status da OP -- ela continua na fila da Formulação
-                // até uma nova confirmação, com a pendência registrada para
-                // acompanhamento (resolvida por fora do sistema).
-                $stmt_log = $pdo->prepare("INSERT INTO formulacoes (op_id, usuario_id, status, motivo_pendencia, auxiliares_formulacao, observacao) VALUES (?, ?, 'PENDENCIA', ?, ?, ?)");
-                $stmt_log->execute([$op_id, $usuario_id, $motivo, $auxiliares, $observacao]);
+                // Salva o status atual em status_anterior ANTES de sobrescrever
+                // -- mesmo mecanismo do Almoxarifado: guarda de onde a OP
+                // veio, sem perder o valor original numa segunda pendência
+                // seguida (só copia se ainda não estava em PENDENCIA).
+                $pdo->prepare("
+                    UPDATE ordens_producao
+                    SET status_anterior = IF(status = 'PENDENCIA', status_anterior, status),
+                        status = 'PENDENCIA'
+                    WHERE id = ?
+                ")->execute([$op_id]);
+
+                $stmt_log = $pdo->prepare("INSERT INTO formulacoes (op_id, usuario_id, status, motivo_pendencia, auxiliares_formulacao, observacao) VALUES (?, ?, 'PENDENCIA', NULL, ?, ?)");
+                $stmt_log->execute([$op_id, $usuario_id, $auxiliares, $observacao]);
 
                 if ($dados_op && !empty($dados_op['criador_id'])) {
-                    $motivo_label = $motivos_pendencia_labels[$motivo] ?? 'Motivo não informado';
-                    notificar_usuario($pdo, (int)$dados_op['criador_id'], $op_id, 'PENDENCIA_FORMULACAO', "Pendência ao formular a OP {$dados_op['op_sistema']}: {$motivo_label} -- {$observacao}");
-                    notificar_setor($pdo, 'ADMIN', $op_id, 'PENDENCIA_FORMULACAO', "Pendência ao formular a OP {$dados_op['op_sistema']}: {$motivo_label} -- {$observacao}");
+                    notificar_usuario($pdo, (int)$dados_op['criador_id'], $op_id, 'PENDENCIA_FORMULACAO', "Pendência ao formular a OP {$dados_op['op_sistema']}: {$observacao}");
+                    notificar_setor($pdo, 'ADMIN', $op_id, 'PENDENCIA_FORMULACAO', "Pendência ao formular a OP {$dados_op['op_sistema']}: {$observacao}");
                 }
 
-                $mensagem = "Pendência registrada. A OP permanece na fila até nova confirmação.";
+                $mensagem = "Pendência registrada. A OP foi marcada como Pendência e vai aparecer nesse filtro pro PCP até ser resolvida.";
                 $tipo_msg = 'erro';
             }
 
@@ -147,7 +154,7 @@ function render_modais_op(array $op, string $prefix, string $nome_usuario_logado
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
                     </svg>
                     <div>
-                        <span class="text-[11px] font-bold text-rose-600 uppercase tracking-wide block">Pendência em aberto — <?= htmlspecialchars($motivos_labels[$op['pendencia_form_motivo']] ?? 'Motivo não informado') ?></span>
+                        <span class="text-[11px] font-bold text-rose-600 uppercase tracking-wide block">Pendência em aberto</span>
                         <span class="text-sm text-rose-700"><?= htmlspecialchars($op['pendencia_form_obs'] ?? '') ?></span>
                         <span class="block text-rose-400 text-xs mt-0.5">Registrada em <?= date('d/m/Y H:i', strtotime($op['pendencia_form_data'])) ?></span>
                     </div>
@@ -220,7 +227,7 @@ function render_modais_op(array $op, string $prefix, string $nome_usuario_logado
         </div>
     </dialog>
 
-    <!-- MODAL DEDICADA: REGISTRAR PENDÊNCIA (motivo + observação obrigatórios) -->
+    <!-- MODAL DEDICADA: REGISTRAR PENDÊNCIA (observação obrigatória) -->
     <dialog id="<?= $id_modal_pendencia ?>" class="p-0 rounded-2xl shadow-2xl border border-slate-200 w-[95%] max-w-md bg-white backdrop:bg-slate-900/60 backdrop:backdrop-blur-sm m-auto overflow-hidden">
         <div class="bg-rose-50 border-b border-rose-100 p-5 flex justify-between items-center">
             <div class="flex items-center gap-3">
@@ -242,17 +249,6 @@ function render_modais_op(array $op, string $prefix, string $nome_usuario_logado
         </div>
         <form method="POST" class="p-6 space-y-4">
             <input type="hidden" name="op_id" value="<?= $op['id'] ?>">
-            <div>
-                <label class="block text-xs font-bold text-slate-600 mb-2">Motivo da pendência <span class="text-rose-500">*</span></label>
-                <div class="space-y-2">
-                    <?php foreach ($motivos_labels as $valor => $label): ?>
-                        <label class="flex items-center gap-2.5 border border-slate-200 rounded-lg px-3.5 py-2.5 cursor-pointer hover:bg-slate-50 has-[:checked]:border-rose-300 has-[:checked]:bg-rose-50 transition-colors">
-                            <input type="radio" name="motivo_pendencia" value="<?= $valor ?>" required class="accent-rose-600">
-                            <span class="text-sm font-medium text-slate-700"><?= htmlspecialchars($label) ?></span>
-                        </label>
-                    <?php endforeach; ?>
-                </div>
-            </div>
             <div>
                 <label class="block text-xs font-bold text-slate-600 mb-1.5">Descreva a pendência <span class="text-rose-500">*</span></label>
                 <textarea name="observacao_formulacao" required rows="4" placeholder="Ex: Falta resina X para completar o lote..." class="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-rose-100 focus:border-rose-400 focus:outline-none transition-colors resize-none"></textarea>
@@ -284,7 +280,7 @@ try {
     // Bolinha vermelha: quantas OPs aguardam especificamente a Formulação
     // (PROGRAMADO ou AGUARDANDO FORMULACAO), por linha e por fábrica.
     $linhas_pendentes_form = array_column(
-        $pdo->query("SELECT linha_id, COUNT(*) as qtd FROM ordens_producao WHERE status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO') AND linha_id IS NOT NULL GROUP BY linha_id")->fetchAll(PDO::FETCH_ASSOC),
+        $pdo->query("SELECT linha_id, COUNT(*) as qtd FROM ordens_producao WHERE status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'PENDENCIA') AND linha_id IS NOT NULL GROUP BY linha_id")->fetchAll(PDO::FETCH_ASSOC),
         'qtd', 'linha_id'
     );
     $fabricas_pendentes_form = array_column(
@@ -292,7 +288,7 @@ try {
             SELECT l.fabrica, COUNT(op.id) as qtd
             FROM ordens_producao op
             JOIN linhas l ON op.linha_id = l.id
-            WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO')
+            WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'PENDENCIA')
             GROUP BY l.fabrica
         ")->fetchAll(PDO::FETCH_ASSOC),
         'qtd', 'fabrica'
@@ -323,7 +319,7 @@ try {
         LEFT JOIN linhas l ON op.linha_id = l.id
         LEFT JOIN (" . sql_ultima_tentativa_almoxarifado() . ") sa ON sa.op_id = op.id
         LEFT JOIN (" . sql_ultima_tentativa_formulacao() . ") sf ON sf.op_id = op.id
-        WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO') AND op.linha_id = ?
+        WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'PENDENCIA') AND op.linha_id = ?
         ORDER BY op.ordem_fila ASC, op.id ASC
     ");
     $stmt_ops->execute([$linha_selecionada_id]);
@@ -331,7 +327,7 @@ try {
     foreach ($detalhes_ops as &$op) $op['produtos'] = buscar_produtos_op($pdo, $op['id']);
     unset($op);
 
-    $total_pendentes_geral = (int)$pdo->query("SELECT COUNT(*) FROM ordens_producao WHERE status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO')")->fetchColumn();
+    $total_pendentes_geral = (int)$pdo->query("SELECT COUNT(*) FROM ordens_producao WHERE status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'PENDENCIA')")->fetchColumn();
 
     // ========================================================================
     // 3. PENDÊNCIAS ABERTAS (global, qualquer linha)
@@ -348,7 +344,7 @@ try {
         LEFT JOIN (" . sql_ultima_tentativa_almoxarifado() . ") sa ON sa.op_id = op.id
         LEFT JOIN formulacoes sf_full ON sf_full.op_id = op.id AND sf_full.created_at = sf.created_at
         LEFT JOIN usuarios u ON sf_full.usuario_id = u.id
-        WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO')
+        WHERE op.status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'PENDENCIA')
         ORDER BY sf.created_at ASC
     ");
     $pendencias_abertas = $stmt_pend->fetchAll(PDO::FETCH_ASSOC);
@@ -378,7 +374,7 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Formulação - Preparo de Matéria-Prima</title>
-        <link rel="icon" type="image/png" href="logo.png">
+    <link rel="icon" type="image/png" href="logo.png">
 
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;900&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>

@@ -20,6 +20,18 @@ if ($sino_disponivel) {
 // inteiro da OP (separada/formulada/produzida) -- só eles ganham as
 // abas no sino. Almoxarifado e Formulação continuam com lista única.
 $sino_com_abas = $sino_disponivel && ($_SESSION['tipo_acesso'] ?? '') === 'usuario' && in_array($_SESSION['setor'] ?? '', ['PCP', 'ADMIN'], true);
+
+// Admin acessa todos os módulos direto pelo header -- os outros setores
+// continuam restritos à própria tela (a segurança de cada página já
+// bloqueia quem não é ADMIN/PCP mesmo se tentar acessar a URL direto).
+$eh_admin_nav = ($_SESSION['tipo_acesso'] ?? '') === 'usuario' && ($_SESSION['setor'] ?? '') === 'ADMIN';
+$modulos_admin = [
+    ['label' => 'Dashboard Gerencial', 'href' => 'dashboard_admin.php', 'icone' => 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z'],
+    ['label' => 'Programação (PCP)', 'href' => 'programacao_pcp.php', 'icone' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'],
+    ['label' => 'Almoxarifado', 'href' => 'separacao_almoxarifado.php', 'icone' => 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4'],
+    ['label' => 'Formulação', 'href' => 'formulacao.php', 'icone' => 'M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z'],
+    ['label' => 'Cadastros', 'href' => 'cadastros.php', 'icone' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'],
+];
 $contadores_categoria_inicial = ['separadas' => 0, 'formuladas' => 0, 'produzidas' => 0, 'outras' => 0];
 if ($sino_com_abas) {
     try {
@@ -54,10 +66,10 @@ if ($sino_com_abas) {
             </h1>
             
             <div class="flex items-center gap-2">
-                <?php if (isset($_SESSION['login']) && isset($_SESSION['fabrica']) && $_SESSION['fabrica'] > 0 && $_SESSION['fabrica'] != 99): ?>
+                <?php if (isset($_SESSION['nome']) && isset($_SESSION['fabrica']) && $_SESSION['fabrica'] > 0 && $_SESSION['fabrica'] != 99): ?>
                     <span class="text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1">
                         <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                        Linha: <span class="text-blue-600"><?= htmlspecialchars($_SESSION['login']) ?></span>
+                        Linha: <span class="text-blue-600"><?= htmlspecialchars($_SESSION['nome']) ?></span>
                     </span>
                 <?php endif; ?>
 
@@ -72,6 +84,31 @@ if ($sino_com_abas) {
     </div>
 
     <div class="flex items-center gap-4 md:gap-6">
+
+        <?php if ($eh_admin_nav): ?>
+            <div class="relative">
+                <button id="btn_modulos_admin" onclick="toggleMenuModulos()" title="Ir para outro módulo" type="button" class="group flex items-center gap-1.5 h-10 px-3.5 rounded-full bg-gray-50 hover:bg-gray-100 border border-transparent hover:border-gray-300 transition-all duration-300 shadow-sm hover:shadow">
+                    <svg class="w-4 h-4 text-gray-400 group-hover:text-gray-800 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                    <span class="text-xs font-bold text-gray-500 group-hover:text-gray-800 uppercase tracking-wide hidden sm:inline">Módulos</span>
+                    <svg class="w-3 h-3 text-gray-400 group-hover:text-gray-800 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg>
+                </button>
+
+                <div id="menu_modulos_admin" class="hidden absolute right-0 mt-2 w-60 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50">
+                    <div class="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
+                        <span class="text-[10px] font-black text-gray-500 uppercase tracking-widest">Acesso Admin -- todos os módulos</span>
+                    </div>
+                    <?php foreach ($modulos_admin as $mod):
+                        $eh_pagina_atual = basename($_SERVER['SCRIPT_NAME']) === $mod['href'];
+                    ?>
+                        <a href="<?= $mod['href'] ?>" class="flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors <?= $eh_pagina_atual ? 'bg-slate-50 text-slate-900' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900' ?>">
+                            <svg class="w-4 h-4 shrink-0 <?= $eh_pagina_atual ? 'text-slate-800' : 'text-gray-400' ?>" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="<?= $mod['icone'] ?>"></path></svg>
+                            <?= $mod['label'] ?>
+                            <?php if ($eh_pagina_atual): ?><span class="ml-auto text-[9px] font-black text-slate-400 uppercase">Aqui</span><?php endif; ?>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+        <?php endif; ?>
 
         <?php if ($sino_disponivel): ?>
             <div class="relative">
@@ -114,24 +151,39 @@ if ($sino_com_abas) {
                     </div>
                 </div>
             </div>
-       <?php endif; ?>
-
-        <!-- Botão exclusivo para ADMIN (Voltar ao Dashboard) -->
-        <?php if (isset($_SESSION['tipo_acesso']) && $_SESSION['tipo_acesso'] === 'usuario' && isset($_SESSION['setor']) && $_SESSION['setor'] === 'ADMIN'): ?>
-            <a href="dashboard_admin.php" title="Painel Gerencial" class="group flex items-center justify-center w-10 h-10 rounded-full bg-gray-50 hover:bg-emerald-50 border border-transparent hover:border-emerald-200 transition-all duration-300 shadow-sm hover:shadow shrink-0">
-                <svg class="w-5 h-5 text-gray-400 group-hover:text-emerald-600 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
-                </svg>
-            </a>
         <?php endif; ?>
 
-        <a href="logout.php" title="Sair do Sistema" class="group flex items-center justify-center w-10 h-10 rounded-full bg-gray-50 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all duration-300 shadow-sm hover:shadow shrink-0">   <svg class="w-5 h-5 text-gray-400 group-hover:text-red-600 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <a href="logout.php" title="Sair do Sistema" class="group flex items-center justify-center w-10 h-10 rounded-full bg-gray-50 hover:bg-red-50 border border-transparent hover:border-red-200 transition-all duration-300 shadow-sm hover:shadow">
+            <svg class="w-5 h-5 text-gray-400 group-hover:text-red-600 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
             </svg>
         </a>
     </div>
     
 </header>
+
+<?php if ($eh_admin_nav): ?>
+<script>
+    // ==========================================
+    // MENU DE MÓDULOS (ADMIN)
+    // ==========================================
+    let menuModulosAberto = false;
+
+    function toggleMenuModulos() {
+        menuModulosAberto = !menuModulosAberto;
+        document.getElementById('menu_modulos_admin').classList.toggle('hidden', !menuModulosAberto);
+    }
+
+    document.addEventListener('click', function (e) {
+        const menu = document.getElementById('menu_modulos_admin');
+        const btn = document.getElementById('btn_modulos_admin');
+        if (menu && !menu.classList.contains('hidden') && !menu.contains(e.target) && !btn.contains(e.target)) {
+            menu.classList.add('hidden');
+            menuModulosAberto = false;
+        }
+    });
+</script>
+<?php endif; ?>
 
 <?php if ($sino_disponivel): ?>
 <script>

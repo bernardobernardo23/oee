@@ -309,7 +309,7 @@ try {
                         <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 hover:shadow-md hover:border-blue-400 transition flex flex-col justify-between">
                             <div>
                                 <div class="flex justify-between items-center mb-1">
-                                    <div class="text-xs text-gray-400 font-bold uppercase tracking-wider">Turno #<?= $apt['id'] ?></div>
+                                    <div class="text-xs text-gray-400 font-bold uppercase tracking-wider">OP #<?= $apt['id'] ?></div>
                                     <div class="text-xs font-black <?= $apt['oee_geral'] >= 85 ? 'text-green-600' : ($apt['oee_geral'] >= 60 ? 'text-yellow-600' : 'text-red-600') ?>"><?= number_format($apt['oee_geral'], 1, ',', '.') ?>% OEE</div>
                                 </div>
                                 <div class="text-lg font-black text-blue-600 mb-2"><?= $apt['dt_inicio']->format('H:i') ?> <span class="text-gray-400 text-sm mx-1">até</span> <?= $apt['dt_fim']->format('H:i') ?></div>
@@ -330,7 +330,7 @@ try {
                                 </div>
                             </div>
                             <button onclick="document.getElementById('modal_apt_<?= $apt['id'] ?>').showModal()" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 rounded shadow-sm transition">
-                                Detalhar Turno
+                                Detalhar Produção
                             </button>
                         </div>
 
@@ -338,7 +338,7 @@ try {
                             <div class="p-6 max-h-[85vh] overflow-y-auto">
                                 <div class="flex justify-between items-start border-b border-gray-200 pb-4 mb-4">
                                     <div>
-                                        <h3 class="text-xl font-black text-gray-800">Detalhes do Turno #<?= $apt['id'] ?></h3>
+                                        <h3 class="text-xl font-black text-gray-800">Detalhes da Produção #<?= $apt['id'] ?></h3>
                                         <p class="text-sm text-gray-500 font-medium mt-1">Horário: <?= $apt['dt_inicio']->format('H:i') ?> às <?= $apt['dt_fim']->format('H:i') ?> | OP: <?= htmlspecialchars($apt['ordem_producao']) ?></p>
                                         <p class="text-sm text-gray-500 font-medium"><span class="font-bold">Equipe:</span> <?= $lista_operadores ?></p>
                                     </div>
@@ -346,7 +346,7 @@ try {
                                 </div>
 
                                 <div class="mb-6">
-                                    <div class="text-xs font-bold text-gray-400 uppercase mb-1">OEE Deste Turno</div>
+                                    <div class="text-xs font-bold text-gray-400 uppercase mb-1">OEE Desta produção</div>
                                     <div class="text-2xl font-black <?= $apt['oee_geral'] >= 85 ? 'text-green-600' : ($apt['oee_geral'] >= 60 ? 'text-yellow-600' : 'text-red-600') ?>">
                                         <?= number_format($apt['oee_geral'], 1, ',', '.') ?>%
                                     </div>

@@ -193,6 +193,7 @@ try {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Master Data - MES/OEE</title>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="logo.png">
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -250,11 +251,12 @@ try {
             <button type="button" onclick="mudarAbaCadastro('produtos')" id="tab_produtos" class="tab-cadastro px-5 py-2.5 rounded-lg text-sm font-bold transition-colors bg-white text-slate-500 border border-slate-200 hover:bg-slate-100">Produtos &amp; Insumos</button>
         </div>
 
-        <!-- ===================================================== -->
+       <!-- ===================================================== -->
         <!-- ABA: LINHAS                                           -->
         <!-- ===================================================== -->
         <div id="aba_linhas" class="aba-cadastro space-y-6">
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- FORMULÁRIO DE NOVA LINHA -->
                 <form method="POST" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/60 relative overflow-hidden lg:col-span-1">
                     <div class="absolute top-0 left-0 w-full h-1 bg-purple-500"></div>
                     <input type="hidden" name="tipo_cadastro" value="linha">
@@ -293,13 +295,14 @@ try {
                     </div>
                 </form>
 
+                <!-- TABELA DE LINHAS -->
                 <div class="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden lg:col-span-2">
                     <div class="p-5 border-b border-slate-100 bg-slate-50/50">
                         <h3 class="text-sm font-bold text-slate-700">Linhas Cadastradas (<?= count($linhas_lista) ?>)</h3>
                     </div>
                     <div class="overflow-x-auto max-h-[420px] overflow-y-auto">
                         <table class="w-full text-left text-sm">
-                            <thead class="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider font-bold sticky top-0">
+                            <thead class="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider font-bold sticky top-0 z-10">
                                 <tr>
                                     <th class="p-3">Login</th>
                                     <th class="p-3 text-center">Fábrica</th>
@@ -322,63 +325,22 @@ try {
                                         <td class="p-3 text-slate-400 text-xs"><?= date('d/m/Y', strtotime($l['created_at'])) ?></td>
                                         <td class="p-3">
                                             <div class="flex items-center justify-center gap-1.5">
-                                                <button type="button" onclick="document.getElementById('modal_ed_linha_<?= $l['id'] ?>').showModal()" title="Editar" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <!-- NOVO BOTÃO DE EDITAR CHAMANDO A FUNÇÃO JS -->
+                                                <button type="button" onclick="abrirEditarLinha(<?= $l['id'] ?>, '<?= htmlspecialchars($l['login'], ENT_QUOTES) ?>', <?= $l['fabrica'] ?>, <?= $l['capacidade_dia'] ?>)" title="Editar" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
-                                                    </svg></button>
-                                                <button type="button" onclick="document.getElementById('modal_ex_linha_<?= $l['id'] ?>').showModal()" title="Excluir" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-300 flex items-center justify-center"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                    </svg>
+                                                </button>
+                                                <button type="button" onclick="document.getElementById('modal_ex_linha_<?= $l['id'] ?>').showModal()" title="Excluir" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-300 flex items-center justify-center">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                                    </svg></button>
+                                                    </svg>
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
 
-                                    <dialog id="modal_ed_linha_<?= $l['id'] ?>" class="p-0 rounded-[1.5rem] shadow-2xl border border-slate-100 w-[95%] max-w-md bg-white backdrop:bg-slate-900/60 m-auto overflow-hidden">
-                                        <div class="p-6 pb-5 flex justify-between items-start">
-                                            <div class="flex items-center gap-4">
-                                                <div class="w-12 h-12 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
-                                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
-                                                    </svg>
-                                                </div>
-                                                <div>
-                                                    <h3 class="text-[15px] font-black text-slate-800 uppercase tracking-wide leading-tight">Editar Linha</h3>
-                                                    <p class="text-sm font-bold text-slate-400 mt-0.5"><?= strtoupper(htmlspecialchars($l['login'])) ?></p>
-                                                </div>
-                                            </div>
-                                            <button type="button" onclick="this.closest('dialog').close()" class="w-9 h-9 border-2 border-slate-800 rounded-[10px] flex items-center justify-center text-slate-700 hover:bg-slate-100 transition-colors shrink-0">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
-                                                </svg>
-                                            </button>
-                                        </div>
-                                        <form method="POST" class="px-6 pb-6 space-y-5">
-                                            <input type="hidden" name="acao" value="editar_linha">
-                                            <input type="hidden" name="id" value="<?= $l['id'] ?>">
-                                            <div>
-                                                <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Login</label>
-                                                <input type="text" name="login" required value="<?= htmlspecialchars($l['login']) ?>" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-purple-400 focus:ring-1 focus:ring-purple-400 outline-none transition-all lowercase">
-                                            </div>
-                                            <div>
-                                                <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Nova Senha (Opcional)</label>
-                                                <input type="password" name="senha" placeholder="Deixe em branco para manter" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-purple-400 focus:ring-1 focus:ring-purple-400 outline-none transition-all">
-                                            </div>
-                                            <div class="grid grid-cols-2 gap-4">
-                                                <div>
-                                                    <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Fábrica</label>
-                                                    <input type="number" name="fabrica" required min="1" value="<?= $l['fabrica'] ?>" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-purple-400 focus:ring-1 focus:ring-purple-400 outline-none transition-all text-center">
-                                                </div>
-                                                <div>
-                                                    <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Capacidade/Dia</label>
-                                                    <input type="number" name="capacidade_dia" required min="1" value="<?= $l['capacidade_dia'] ?>" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-purple-700 bg-white focus:border-purple-400 focus:ring-1 focus:ring-purple-400 outline-none transition-all">
-                                                </div>
-                                            </div>
-                                            <div class="flex gap-3 pt-2">
-                                                <button type="button" onclick="this.closest('dialog').close()" class="flex-1 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold py-3.5 rounded-xl transition-colors text-sm">Voltar</button>
-                                                <button type="submit" class="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3.5 rounded-xl transition-colors shadow-md text-sm">Salvar</button>
-                                            </div>
-                                        </form>
-                                    </dialog>
-
+                                    <!-- A modal de excluir continua aqui pois é simples -->
                                     <dialog id="modal_ex_linha_<?= $l['id'] ?>" class="p-0 rounded-2xl shadow-2xl border border-slate-200 w-[95%] max-w-sm bg-white backdrop:bg-slate-900/60 m-auto overflow-hidden">
                                         <div class="p-6 text-center">
                                             <h3 class="text-base font-bold text-slate-800 mb-1.5">Excluir esta linha?</h3>
@@ -397,6 +359,57 @@ try {
                     </div>
                 </div>
             </div>
+
+            <!-- ========================================================================= -->
+            <!-- MODAL ÚNICA DE EDIÇÃO DE LINHA (FORA DA TABELA E DO LAÇO) ============= -->
+            <!-- ========================================================================= -->
+            <dialog id="modal_editar_linha" class="p-0 rounded-[1.5rem] shadow-2xl border border-slate-100 w-[95%] max-w-md bg-white backdrop:bg-slate-900/60 m-auto overflow-hidden">
+                <div class="p-6 pb-5 flex justify-between items-start">
+                    <div class="flex items-center gap-4">
+                        <div class="w-12 h-12 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-[15px] font-black text-slate-800 uppercase tracking-wide leading-tight">Editar Linha</h3>
+                            <p id="editar_linha_subtitulo" class="text-sm font-bold text-slate-400 mt-0.5 uppercase"></p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="this.closest('dialog').close()" class="w-9 h-9 border-2 border-slate-800 rounded-[10px] flex items-center justify-center text-slate-700 hover:bg-slate-100 transition-colors shrink-0">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <form method="POST" class="px-6 pb-6 space-y-5">
+                    <input type="hidden" name="acao" value="editar_linha">
+                    <input type="hidden" name="id" id="editar_linha_id">
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Login</label>
+                        <input type="text" name="login" id="editar_linha_login" required class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-purple-400 focus:ring-1 focus:ring-purple-400 outline-none transition-all lowercase">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Nova Senha (Opcional)</label>
+                        <input type="password" name="senha" placeholder="Deixe em branco para manter" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-purple-400 focus:ring-1 focus:ring-purple-400 outline-none transition-all">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Fábrica</label>
+                            <input type="number" name="fabrica" id="editar_linha_fabrica" required min="1" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-purple-400 focus:ring-1 focus:ring-purple-400 outline-none transition-all text-center">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Capacidade/Dia</label>
+                            <input type="number" name="capacidade_dia" id="editar_linha_capacidade_dia" required min="1" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-purple-700 bg-white focus:border-purple-400 focus:ring-1 focus:ring-purple-400 outline-none transition-all">
+                        </div>
+                    </div>
+                    <div class="flex gap-3 pt-2">
+                        <button type="button" onclick="this.closest('dialog').close()" class="flex-1 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold py-3.5 rounded-xl transition-colors text-sm">Voltar</button>
+                        <button type="submit" class="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3.5 rounded-xl transition-colors shadow-md text-sm">Salvar</button>
+                    </div>
+                </form>
+            </dialog>
+            <!-- ========================================================================= -->
         </div>
 
         <!-- ===================================================== -->
@@ -404,6 +417,8 @@ try {
         <!-- ===================================================== -->
         <div id="aba_usuarios" class="aba-cadastro space-y-6 hidden">
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                <!-- FORMULÁRIO DE NOVO USUÁRIO -->
                 <form method="POST" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/60 relative overflow-hidden lg:col-span-1">
                     <div class="absolute top-0 left-0 w-full h-1 bg-teal-500"></div>
                     <input type="hidden" name="tipo_cadastro" value="usuario">
@@ -437,8 +452,6 @@ try {
                                     <option value="PCP">PCP</option>
                                     <option value="ALMOXARIFADO">Almoxarifado</option>
                                     <option value="FORMULACAO">Formulação</option>
-                                    <option value="QUALIDADE">Qualidade</option>
-                                    <option value="DIRETORIA">Diretoria</option>
                                     <option value="ADMIN">Admin</option>
                                 </select>
                                 <svg class="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -450,13 +463,14 @@ try {
                     </div>
                 </form>
 
+                <!-- TABELA DE USUÁRIOS -->
                 <div class="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden lg:col-span-2">
                     <div class="p-5 border-b border-slate-100 bg-slate-50/50">
                         <h3 class="text-sm font-bold text-slate-700">Usuários Cadastrados (<?= count($usuarios_lista) ?>)</h3>
                     </div>
                     <div class="overflow-x-auto max-h-[420px] overflow-y-auto">
                         <table class="w-full text-left text-sm">
-                            <thead class="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider font-bold sticky top-0">
+                            <thead class="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider font-bold sticky top-0 z-10">
                                 <tr>
                                     <th class="p-3">Nome</th>
                                     <th class="p-3">Login</th>
@@ -481,84 +495,22 @@ try {
                                         </td>
                                         <td class="p-3">
                                             <div class="flex items-center justify-center gap-1.5">
-                                                <button type="button" onclick="document.getElementById('modal_ed_usuario_<?= $u['id'] ?>').showModal()" title="Editar" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <!-- NOVO BOTÃO DE EDITAR CHAMANDO A FUNÇÃO JS -->
+                                                <button type="button" onclick="abrirEditarUsuario(<?= $u['id'] ?>, '<?= htmlspecialchars($u['nome_completo'], ENT_QUOTES) ?>', '<?= htmlspecialchars($u['login'], ENT_QUOTES) ?>', '<?= htmlspecialchars($u['setor'], ENT_QUOTES) ?>', '<?= htmlspecialchars($u['status'], ENT_QUOTES) ?>')" title="Editar" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
-                                                    </svg></button>
-                                                <button type="button" onclick="document.getElementById('modal_ex_usuario_<?= $u['id'] ?>').showModal()" title="Excluir" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-300 flex items-center justify-center"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                    </svg>
+                                                </button>
+                                                <button type="button" onclick="document.getElementById('modal_ex_usuario_<?= $u['id'] ?>').showModal()" title="Excluir" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-300 flex items-center justify-center">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                                    </svg></button>
+                                                    </svg>
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
 
-                                    <dialog id="modal_ed_usuario_<?= $u['id'] ?>" class="p-0 rounded-[1.5rem] shadow-2xl border border-slate-100 w-[95%] max-w-md bg-white backdrop:bg-slate-900/60 m-auto overflow-hidden">
-                                        <div class="p-6 pb-5 flex justify-between items-start">
-                                            <div class="flex items-center gap-4">
-                                                <div class="w-12 h-12 rounded-full bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
-                                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
-                                                    </svg>
-                                                </div>
-                                                <div>
-                                                    <h3 class="text-[15px] font-black text-slate-800 uppercase tracking-wide leading-tight">Editar Usuário</h3>
-                                                    <p class="text-sm font-bold text-slate-400 mt-0.5"><?= htmlspecialchars($u['nome_completo']) ?></p>
-                                                </div>
-                                            </div>
-                                            <button type="button" onclick="this.closest('dialog').close()" class="w-9 h-9 border-2 border-slate-800 rounded-[10px] flex items-center justify-center text-slate-700 hover:bg-slate-100 transition-colors shrink-0">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
-                                                </svg>
-                                            </button>
-                                        </div>
-                                        <form method="POST" class="px-6 pb-6 space-y-5">
-                                            <input type="hidden" name="acao" value="editar_usuario">
-                                            <input type="hidden" name="id" value="<?= $u['id'] ?>">
-                                            <div>
-                                                <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Nome Completo</label>
-                                                <input type="text" name="nome_completo" required value="<?= htmlspecialchars($u['nome_completo']) ?>" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-400 outline-none transition-all">
-                                            </div>
-                                            <div>
-                                                <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Login</label>
-                                                <input type="text" name="login" required value="<?= htmlspecialchars($u['login']) ?>" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-400 outline-none transition-all lowercase">
-                                            </div>
-                                            <div>
-                                                <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Nova Senha (Opcional)</label>
-                                                <input type="password" name="senha" placeholder="Deixe em branco para manter" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-400 outline-none transition-all">
-                                            </div>
-                                            <div class="grid grid-cols-2 gap-4">
-                                                <div>
-                                                    <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Setor</label>
-                                                    <div class="relative">
-                                                        <select name="setor" required class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-400 outline-none transition-all appearance-none cursor-pointer">
-                                                            <?php foreach (['PCP', 'ALMOXARIFADO', 'FORMULACAO', 'QUALIDADE', 'DIRETORIA', 'ADMIN'] as $s): ?>
-                                                                <option value="<?= $s ?>" <?= $u['setor'] === $s ? 'selected' : '' ?>><?= ucfirst(strtolower($s)) ?></option>
-                                                            <?php endforeach; ?>
-                                                        </select>
-                                                        <svg class="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
-                                                        </svg>
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Status</label>
-                                                    <div class="relative">
-                                                        <select name="status" required class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-400 outline-none transition-all appearance-none cursor-pointer">
-                                                            <option value="ATIVO" <?= $u['status'] === 'ATIVO' ? 'selected' : '' ?>>Ativo</option>
-                                                            <option value="INATIVO" <?= $u['status'] === 'INATIVO' ? 'selected' : '' ?>>Inativo</option>
-                                                        </select>
-                                                        <svg class="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
-                                                        </svg>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div class="flex gap-3 pt-2">
-                                                <button type="button" onclick="this.closest('dialog').close()" class="flex-1 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold py-3.5 rounded-xl transition-colors text-sm">Voltar</button>
-                                                <button type="submit" class="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3.5 rounded-xl transition-colors shadow-md text-sm">Salvar</button>
-                                            </div>
-                                        </form>
-                                    </dialog>
-
+                                    <!-- A modal de excluir continua aqui pois é simples e funcionou bem -->
                                     <dialog id="modal_ex_usuario_<?= $u['id'] ?>" class="p-0 rounded-2xl shadow-2xl border border-slate-200 w-[95%] max-w-sm bg-white backdrop:bg-slate-900/60 m-auto overflow-hidden">
                                         <div class="p-6 text-center">
                                             <h3 class="text-base font-bold text-slate-800 mb-1.5">Excluir este usuário?</h3>
@@ -577,6 +529,78 @@ try {
                     </div>
                 </div>
             </div>
+
+            <!-- ========================================================================= -->
+            <!-- MODAL ÚNICA DE EDIÇÃO DE USUÁRIO (FORA DA TABELA E DO LAÇO) ============= -->
+            <!-- ========================================================================= -->
+            <dialog id="modal_editar_usuario" class="p-0 rounded-[1.5rem] shadow-2xl border border-slate-100 w-[95%] max-w-md bg-white backdrop:bg-slate-900/60 m-auto overflow-hidden">
+                <div class="p-6 pb-5 flex justify-between items-start">
+                    <div class="flex items-center gap-4">
+                        <div class="w-12 h-12 rounded-full bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-[15px] font-black text-slate-800 uppercase tracking-wide leading-tight">Editar Usuário</h3>
+                            <p id="editar_usuario_subtitulo" class="text-sm font-bold text-slate-400 mt-0.5"></p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="this.closest('dialog').close()" class="w-9 h-9 border-2 border-slate-800 rounded-[10px] flex items-center justify-center text-slate-700 hover:bg-slate-100 transition-colors shrink-0">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <form method="POST" class="px-6 pb-6 space-y-5">
+                    <input type="hidden" name="acao" value="editar_usuario">
+                    <input type="hidden" name="id" id="editar_usuario_id">
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Nome Completo</label>
+                        <input type="text" name="nome_completo" id="editar_usuario_nome" required class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-400 outline-none transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Login</label>
+                        <input type="text" name="login" id="editar_usuario_login" required class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-400 outline-none transition-all lowercase">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Nova Senha (Opcional)</label>
+                        <input type="password" name="senha" placeholder="Deixe em branco para manter" class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-400 outline-none transition-all">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Setor</label>
+                            <div class="relative">
+                                <select name="setor" id="editar_usuario_setor" required class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-400 outline-none transition-all appearance-none cursor-pointer">
+                                    <?php foreach (['PCP', 'ALMOXARIFADO', 'FORMULACAO', 'QUALIDADE', 'DIRETORIA', 'ADMIN'] as $s): ?>
+                                        <option value="<?= $s ?>"><?= ucfirst(strtolower($s)) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <svg class="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">Status</label>
+                            <div class="relative">
+                                <select name="status" id="editar_usuario_status" required class="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-400 outline-none transition-all appearance-none cursor-pointer">
+                                    <option value="ATIVO">Ativo</option>
+                                    <option value="INATIVO">Inativo</option>
+                                </select>
+                                <svg class="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex gap-3 pt-2">
+                        <button type="button" onclick="this.closest('dialog').close()" class="flex-1 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold py-3.5 rounded-xl transition-colors text-sm">Voltar</button>
+                        <button type="submit" class="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3.5 rounded-xl transition-colors shadow-md text-sm">Salvar</button>
+                    </div>
+                </form>
+            </dialog>
+            <!-- ========================================================================= -->
         </div>
 
         <!-- ===================================================== -->
@@ -584,6 +608,7 @@ try {
         <!-- ===================================================== -->
         <div id="aba_paradas" class="aba-cadastro space-y-6 hidden">
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- FORMULÁRIO DE NOVO MOTIVO -->
                 <form method="POST" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/60 relative overflow-hidden lg:col-span-1">
                     <div class="absolute top-0 left-0 w-full h-1 bg-rose-500"></div>
                     <input type="hidden" name="tipo_cadastro" value="parada">
@@ -604,11 +629,11 @@ try {
                                 <input type="text" name="codigo" required placeholder="Ex: P01" class="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-rose-100 focus:border-rose-400 bg-slate-50 focus:bg-white transition-colors">
                             </div>
                             <div>
-                                <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">Impacto no OEE</label>
+                                <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">Impacto </label>
                                 <div class="relative">
                                     <select name="tipo_parada" required class="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-rose-100 focus:border-rose-400 bg-slate-50 focus:bg-white transition-colors appearance-none">
-                                        <option value="Nao_Planejada">🛑 Queda (Não Planejada)</option>
-                                        <option value="Planejada">☕ Pausa (Planejada)</option>
+                                        <option value="Nao_Planejada">Não Planejada</option>
+                                        <option value="Planejada"> Planejada</option>
                                     </select>
                                     <svg class="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
@@ -634,13 +659,14 @@ try {
                     </div>
                 </form>
 
+                <!-- TABELA DE MOTIVOS -->
                 <div class="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden lg:col-span-2">
                     <div class="p-5 border-b border-slate-100 bg-slate-50/50">
                         <h3 class="text-sm font-bold text-slate-700">Motivos Cadastrados (<?= count($paradas_lista) ?>)</h3>
                     </div>
                     <div class="overflow-x-auto max-h-[420px] overflow-y-auto">
                         <table class="w-full text-left text-sm">
-                            <thead class="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider font-bold sticky top-0">
+                            <thead class="bg-slate-50 border-b border-slate-200 text-slate-500 text-[10px] uppercase tracking-wider font-bold sticky top-0 z-10">
                                 <tr>
                                     <th class="p-3">Código</th>
                                     <th class="p-3">Descrição</th>
@@ -665,9 +691,12 @@ try {
                                         <td class="p-3 text-slate-500 text-xs uppercase"><?= htmlspecialchars($p['responsabilidade']) ?></td>
                                         <td class="p-3">
                                             <div class="flex items-center justify-center gap-1.5">
-                                                <button type="button" onclick="document.getElementById('modal_ed_parada_<?= $p['id'] ?>').showModal()" title="Editar" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <!-- O Botão continua aqui, chamando o JS -->
+                                                <button type="button" onclick="abrirEditarParada(<?= $p['id'] ?>, '<?= htmlspecialchars($p['codigo'], ENT_QUOTES) ?>', '<?= $p['tipo'] ?>', '<?= htmlspecialchars($p['descricao'], ENT_QUOTES) ?>', '<?= htmlspecialchars($p['responsabilidade'], ENT_QUOTES) ?>')" title="Editar" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
-                                                    </svg></button>
+                                                    </svg>
+                                                </button>
                                                 <button type="button" onclick="document.getElementById('modal_ex_parada_<?= $p['id'] ?>').showModal()" title="Excluir" class="w-7 h-7 rounded-md border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-300 flex items-center justify-center"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                                                     </svg></button>
@@ -675,61 +704,7 @@ try {
                                         </td>
                                     </tr>
 
-                                    <dialog id="modal_ed_parada_<?= $p['id'] ?>" class="p-0 rounded-2xl shadow-2xl border border-slate-200 w-[95%] max-w-md bg-white backdrop:bg-slate-900/60 m-auto overflow-hidden">
-                                        <div class="bg-slate-50 border-b border-slate-100 p-5 flex justify-between items-center">
-                                            <div class="flex items-center gap-3">
-                                                <div class="w-9 h-9 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
-                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
-                                                    </svg>
-                                                </div>
-                                                <div>
-                                                    <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Editar Motivo</h3>
-                                                    <p class="text-xs font-medium text-slate-400"><?= htmlspecialchars($p['codigo']) ?></p>
-                                                </div>
-                                            </div>
-                                            <button type="button" onclick="this.closest('dialog').close()" class="text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg p-1.5 transition-colors">
-                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                                </svg>
-                                            </button>
-                                        </div>
-                                        <form method="POST" class="p-6 space-y-4">
-                                            <input type="hidden" name="acao" value="editar_parada">
-                                            <input type="hidden" name="id" value="<?= $p['id'] ?>">
-                                            <div class="grid grid-cols-2 gap-4">
-                                                <div>
-                                                    <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase">Código</label>
-                                                    <input type="text" name="codigo" required value="<?= htmlspecialchars($p['codigo']) ?>" class="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold bg-slate-50 focus:bg-white">
-                                                </div>
-                                                <div>
-                                                    <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase">Impacto</label>
-                                                    <div class="relative">
-                                                        <select name="tipo_parada" required class="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold bg-slate-50 focus:bg-white appearance-none">
-                                                            <option value="Nao_Planejada" <?= $p['tipo'] === 'Nao_Planejada' ? 'selected' : '' ?>>🛑 Queda</option>
-                                                            <option value="Planejada" <?= $p['tipo'] === 'Planejada' ? 'selected' : '' ?>>☕ Pausa</option>
-                                                        </select>
-                                                        <svg class="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
-                                                        </svg>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase">Descrição</label>
-                                                <input type="text" name="descricao" required value="<?= htmlspecialchars($p['descricao']) ?>" class="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold bg-slate-50 focus:bg-white uppercase">
-                                            </div>
-                                            <div>
-                                                <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase">Responsabilidade</label>
-                                                <input type="text" name="responsabilidade" required value="<?= htmlspecialchars($p['responsabilidade']) ?>" list="lista_responsabilidades" class="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold bg-slate-50 focus:bg-white uppercase">
-                                            </div>
-                                            <div class="flex gap-3 pt-2">
-                                                <button type="button" onclick="this.closest('dialog').close()" class="flex-1 border border-slate-300 text-slate-600 font-bold py-2.5 rounded-lg text-sm">Voltar</button>
-                                                <button type="submit" class="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-2.5 rounded-lg text-sm">Salvar</button>
-                                            </div>
-                                        </form>
-                                    </dialog>
-
+                                    <!-- A modal de excluir ainda fica no laço pois não usa JS externo, mas não tem campos complexos -->
                                     <dialog id="modal_ex_parada_<?= $p['id'] ?>" class="p-0 rounded-2xl shadow-2xl border border-slate-200 w-[95%] max-w-sm bg-white backdrop:bg-slate-900/60 m-auto overflow-hidden">
                                         <div class="p-6 text-center">
                                             <h3 class="text-base font-bold text-slate-800 mb-1.5">Excluir este motivo?</h3>
@@ -738,7 +713,7 @@ try {
                                                 <input type="hidden" name="acao" value="excluir_parada">
                                                 <input type="hidden" name="id" value="<?= $p['id'] ?>">
                                                 <button type="button" onclick="this.closest('dialog').close()" class="flex-1 border border-slate-300 text-slate-600 font-bold py-2.5 rounded-lg text-sm">Voltar</button>
-                                                <button type="submit" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-lg text-sm">Sim, Excluir</button>
+                                                <button type="submit" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-lg text-sm"> Excluir</button>
                                             </form>
                                         </div>
                                     </dialog>
@@ -748,6 +723,88 @@ try {
                     </div>
                 </div>
             </div>
+
+            <!-- ========================================================================= -->
+            <!-- MODAL ÚNICA DE EDIÇÃO (FORA DA TABELA E DO LAÇO) ======================== -->
+            <!-- ========================================================================= -->
+            <dialog id="modal_editar_parada" class="p-0 rounded-2xl shadow-2xl border border-slate-200 w-[95%] max-w-lg bg-white backdrop:bg-slate-900/60 m-auto overflow-hidden">
+                <!-- Cabeçalho -->
+                <div class="bg-slate-50 border-b border-slate-200 p-6 flex justify-between items-center">
+                    <div class="flex items-center gap-3">
+                        <div class="w-9 h-9 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Editar Motivo</h3>
+                            <p id="editar_parada_subtitulo" class="text-xs font-medium text-slate-500"></p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="this.closest('dialog').close()" class="text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg p-1.5 transition-all">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Formulário -->
+                <form method="POST" class="p-8 space-y-6">
+                    <input type="hidden" name="acao" value="editar_parada">
+                    <input type="hidden" name="id" id="editar_parada_id">
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                        <!-- Código -->
+                        <div>
+                            <label class="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">Código</label>
+                            <input type="text" name="codigo" id="editar_parada_codigo" required class="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-semibold bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-200 focus:border-slate-400 transition-all">
+                        </div>
+
+                        <!-- Impacto -->
+                        <div>
+                            <label class="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">Impacto</label>
+                            <div class="relative">
+                                <select name="tipo_parada" id="editar_parada_tipo" required class="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-semibold bg-slate-50 focus:bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-slate-200 focus:border-slate-400 transition-all">
+                                    <option value="Nao_Planejada">Não Planejada</option>
+                                    <option value="Planejada">Planejada</option>
+                                </select>
+                                <svg class="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Descrição -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">Descrição</label>
+                        <input type="text" name="descricao" id="editar_parada_descricao" required class="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-semibold bg-slate-50 uppercase focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-200 focus:border-slate-400 transition-all">
+                    </div>
+
+                    <!-- Responsabilidade -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">Responsabilidade</label>
+                        <div class="relative">
+                            <select name="responsabilidade" id="editar_parada_responsabilidade" required class="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm font-semibold bg-slate-50 uppercase appearance-none focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-200 focus:border-slate-400 transition-all">
+                                <option value="" disabled selected>Selecione...</option>
+                                <option value="ALEX">ALEX</option>
+                                <option value="CLEBERSON">CLEBERSON</option>
+                                <option value="HOSLEANE">HOSLEANE</option>
+                            </select>
+                            <svg class="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </div>
+
+                    <!-- Botões -->
+                    <div class="flex gap-4 mt-8 pt-6 border-t border-slate-100">
+                        <button type="button" onclick="this.closest('dialog').close()" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-3.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-2 focus:ring-slate-200">Voltar</button>
+                        <button type="submit" class="flex-1 bg-slate-800 hover:bg-slate-900 text-white font-bold py-3.5 rounded-xl text-sm transition-all focus:outline-none focus:ring-2 focus:ring-slate-400 shadow-sm">Salvar</button>
+                    </div>
+                </form>
+            </dialog>
+            <!-- ========================================================================= -->
         </div>
 
         <!-- ===================================================== -->
@@ -800,7 +857,7 @@ try {
 
                         <div class="space-y-4">
                             <div>
-                                <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">Código ERP (SKU)</label>
+                                <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">Código </label>
                                 <input type="text" name="codigo" required placeholder="Ex: 5860" class="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-slate-50 focus:bg-white transition-colors">
                             </div>
                             <div>
@@ -899,7 +956,7 @@ try {
                         <div class="space-y-4">
                             <div class="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">Código ERP</label>
+                                    <label class="block text-xs font-bold text-slate-600 mb-1.5 uppercase tracking-wide">Código</label>
                                     <input type="text" name="codigo" required placeholder="Ex: 746" class="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-orange-100 focus:border-orange-400 bg-slate-50 focus:bg-white transition-colors">
                                 </div>
                                 <div>
@@ -1135,6 +1192,67 @@ try {
             document.getElementById('excluir_componente_id').value = id;
             document.getElementById('excluir_componente_nome').textContent = descricao;
             document.getElementById('modal_excluir_componente').showModal();
+        }
+
+        function abrirModal(id) {
+            const modal = document.getElementById('modal_ed_parada_' + id);
+            if (modal) {
+                modal.classList.remove('hidden');
+            }
+        }
+
+        function fecharModal(id) {
+            const modal = document.getElementById('modal_ed_parada_' + id);
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+        }
+
+        function abrirEditarParada(id, codigo, tipo, descricao, responsabilidade) {
+            // Preenche os inputs invisíveis e visíveis
+            document.getElementById('editar_parada_id').value = id;
+            document.getElementById('editar_parada_codigo').value = codigo;
+            document.getElementById('editar_parada_descricao').value = descricao;
+
+            // Atualiza o textinho subtítulo no cabeçalho
+            document.getElementById('editar_parada_subtitulo').textContent = codigo;
+
+            // Seleciona as opções corretas nos selects
+            document.getElementById('editar_parada_tipo').value = tipo;
+
+            // Converte para maiúsculo para bater com os values do select, ou joga vazio se não tiver
+            document.getElementById('editar_parada_responsabilidade').value = responsabilidade ? responsabilidade.toUpperCase() : '';
+
+            // Abre a modal
+            document.getElementById('modal_editar_parada').showModal();
+        }
+
+        function abrirEditarUsuario(id, nome, login, setor, status) {
+            // Preenche os campos do formulário
+            document.getElementById('editar_usuario_id').value = id;
+            document.getElementById('editar_usuario_nome').value = nome;
+            document.getElementById('editar_usuario_login').value = login;
+            document.getElementById('editar_usuario_setor').value = setor;
+            document.getElementById('editar_usuario_status').value = status;
+
+            // Atualiza o subtítulo no topo da modal com o nome do usuário
+            document.getElementById('editar_usuario_subtitulo').textContent = nome;
+
+            // Exibe a modal
+            document.getElementById('modal_editar_usuario').showModal();
+        }
+        function abrirEditarLinha(id, login, fabrica, capacidadeDia) {
+            // Preenche os campos do formulário da modal
+            document.getElementById('editar_linha_id').value = id;
+            document.getElementById('editar_linha_login').value = login;
+            document.getElementById('editar_linha_fabrica').value = fabrica;
+            document.getElementById('editar_linha_capacidade_dia').value = capacidadeDia;
+            
+            // Atualiza o textinho subtítulo no cabeçalho
+            document.getElementById('editar_linha_subtitulo').textContent = login.toUpperCase();
+
+            // Abre a modal
+            document.getElementById('modal_editar_linha').showModal();
         }
     </script>
 </body>

@@ -39,7 +39,7 @@ try {
         $pdo->prepare("UPDATE ordens_producao SET status = 'PRODUCAO INICIADA' WHERE id = ?")->execute([$op_id]);
 
         if (!empty($dados_op['criador_id'])) {
-            $nome_linha = strtoupper($_SESSION['login'] ?? "linha {$linha_id}");
+            $nome_linha = strtoupper($_SESSION['nome'] ?? "linha {$linha_id}");
             notificar_usuario($pdo, (int)$dados_op['criador_id'], (int)$op_id, 'OP_PRODUCAO_INICIADA', "OP {$op_sistema} iniciou produção na linha {$nome_linha}.");
             notificar_setor($pdo, 'ADMIN', (int)$op_id, 'OP_PRODUCAO_INICIADA', "OP {$op_sistema} iniciou produção na linha {$nome_linha}.");
         }
@@ -75,7 +75,7 @@ try {
         $desc_motivo = $motivo_parada ? "{$motivo_parada['codigo']} - {$motivo_parada['descricao']}" : 'motivo não identificado';
 
         if (!empty($dados_op_pausa['criador_id'])) {
-            $nome_linha_pausa = strtoupper($_SESSION['login'] ?? "linha {$linha_id}");
+            $nome_linha_pausa = strtoupper($_SESSION['nome'] ?? "linha {$linha_id}");
             $msg_pausa = "OP {$dados_op_pausa['op_sistema']} pausada na linha {$nome_linha_pausa}. Motivo: {$desc_motivo}.";
             notificar_usuario($pdo, (int)$dados_op_pausa['criador_id'], (int)$op_id, 'OP_PAUSADA', $msg_pausa);
             notificar_setor($pdo, 'ADMIN', (int)$op_id, 'OP_PAUSADA', $msg_pausa);
@@ -122,7 +122,7 @@ try {
         $dados_op_retoma = $stmt_op_retoma->fetch(PDO::FETCH_ASSOC);
 
         if (!empty($dados_op_retoma['criador_id'])) {
-            $nome_linha_retoma = strtoupper($_SESSION['login'] ?? "linha {$linha_id}");
+            $nome_linha_retoma = strtoupper($_SESSION['nome'] ?? "linha {$linha_id}");
             $msg_retoma = "OP {$dados_op_retoma['op_sistema']} retomou produção na linha {$nome_linha_retoma}"
                 . ($minutos_parados > 0 ? " (parada de {$minutos_parados} min)." : ".");
             notificar_usuario($pdo, (int)$dados_op_retoma['criador_id'], (int)$op_id, 'OP_RETOMADA', $msg_retoma);

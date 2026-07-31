@@ -36,45 +36,48 @@ try {
     // (Separação/Formulação) pra não sumir da tela quando falta só um dos dois.
     // Ordenada por ordem_fila: é a prioridade que o PCP define na esteira,
     // espelhada aqui pro operador.
-    $ops_disponiveis = [];
-    if (!$apontamento_ativo) {
-        $stmt_ops = $pdo->prepare("
-            SELECT id, op_sistema, data_planejada, status, ordem_fila 
-            FROM ordens_producao 
-            WHERE linha_id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'AGUARDANDO ALMOXARIFADO', 'AGUARDANDO INICIO') 
-            ORDER BY ordem_fila ASC, data_planejada ASC, id ASC
-        ");
-        $stmt_ops->execute([$linha_logada_id]);
-        $ops_disponiveis = $stmt_ops->fetchAll(PDO::FETCH_ASSOC);
+    // Busca a fila SEMPRE agora -- não só quando a máquina está parada --
+    // porque o painel de "próximas na fila" passou a aparecer também
+    // durante a produção (pedido do operador pra ver o que vem a seguir
+    // sem precisar finalizar o turno primeiro).
+    $stmt_ops = $pdo->prepare("
+        SELECT id, op_sistema, data_planejada, status, ordem_fila 
+        FROM ordens_producao 
+        WHERE linha_id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'AGUARDANDO ALMOXARIFADO', 'AGUARDANDO INICIO') 
+        ORDER BY ordem_fila ASC, data_planejada ASC, id ASC
+    ");
+    $stmt_ops->execute([$linha_logada_id]);
+    $ops_disponiveis = $stmt_ops->fetchAll(PDO::FETCH_ASSOC);
 
-        // Produtos de cada OP da fila -- pra mostrar o que vai ser
-        // produzido ao selecionar uma delas, sem precisar de outra tela.
-        $stmt_prods_fila = $pdo->prepare("
-            SELECT p.codigo, p.descricao, op_p.quantidade_planejada
-            FROM op_produtos op_p
-            JOIN produtos p ON op_p.produto_id = p.id
-            WHERE op_p.op_id = ?
-            ORDER BY p.codigo ASC
-        ");
-        foreach ($ops_disponiveis as &$op_fila) {
-            $stmt_prods_fila->execute([$op_fila['id']]);
-            $op_fila['produtos'] = $stmt_prods_fila->fetchAll(PDO::FETCH_ASSOC);
-        }
-        unset($op_fila);
+    // Produtos de cada OP da fila -- pra mostrar o que vai ser
+    // produzido ao selecionar uma delas, sem precisar de outra tela.
+    $stmt_prods_fila = $pdo->prepare("
+        SELECT p.codigo, p.descricao, op_p.quantidade_planejada
+        FROM op_produtos op_p
+        JOIN produtos p ON op_p.produto_id = p.id
+        WHERE op_p.op_id = ?
+        ORDER BY p.codigo ASC
+    ");
+    foreach ($ops_disponiveis as &$op_fila) {
+        $stmt_prods_fila->execute([$op_fila['id']]);
+        $op_fila['produtos'] = $stmt_prods_fila->fetchAll(PDO::FETCH_ASSOC);
+    }
+    unset($op_fila);
 
-        // Quantidade total já LIBERADA pra essa linha (as 2 verificações
-        // -- Almoxarifado e Formulação -- já concluídas, só falta apertar
-        // "Iniciar"). Mostrado num quadrinho separado do "Produzido Hoje",
-        // pra dar uma ideia do volume que já está pronto esperando.
-        $stmt_liberado = $pdo->prepare("
-            SELECT IFNULL(SUM(op_p.quantidade_planejada), 0)
-            FROM ordens_producao op
-            JOIN op_produtos op_p ON op_p.op_id = op.id
-            WHERE op.linha_id = ? AND op.status = 'AGUARDANDO INICIO'
-        ");
-        $stmt_liberado->execute([$linha_logada_id]);
-        $total_liberado = $stmt_liberado->fetchColumn();
-    } else {
+    // Quantidade total já LIBERADA pra essa linha (as 2 verificações
+    // -- Almoxarifado e Formulação -- já concluídas, só falta apertar
+    // "Iniciar"). Mostrado num quadrinho separado do "Produzido Hoje",
+    // pra dar uma ideia do volume que já está pronto esperando.
+    $stmt_liberado = $pdo->prepare("
+        SELECT IFNULL(SUM(op_p.quantidade_planejada), 0)
+        FROM ordens_producao op
+        JOIN op_produtos op_p ON op_p.op_id = op.id
+        WHERE op.linha_id = ? AND op.status = 'AGUARDANDO INICIO'
+    ");
+    $stmt_liberado->execute([$linha_logada_id]);
+    $total_liberado = $stmt_liberado->fetchColumn();
+
+    if ($apontamento_ativo) {
         // Produtos da OP que está rodando agora -- mostrado junto do
         // painel "MÁQUINA RODANDO", pra deixar claro o que está sendo
         // produzido sem precisar abrir a modal de finalizar.
@@ -88,59 +91,37 @@ try {
         $stmt_prods_ativa->execute([$apontamento_ativo['op_id']]);
         $produtos_op_ativa = $stmt_prods_ativa->fetchAll(PDO::FETCH_ASSOC);
     }
+
 } catch (PDOException $e) {
     die("Erro ao carregar dados: " . $e->getMessage());
 }
 ?>
 <!DOCTYPE html>
 <html lang="pt-br">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Painel de Máquina - IHM</title>
-        <link rel="icon" type="image/png" href="logo.png">
-
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700;900&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Montserrat', 'sans-serif'],
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        dialog[open] {
-            display: flex;
-            flex-direction: column;
-        }
-    </style>
+    <script>tailwind.config = { theme: { extend: { fontFamily: { sans: ['Montserrat', 'sans-serif'], } } } }</script>
+    <style> dialog[open] { display: flex; flex-direction: column; } </style>
 </head>
-
 <body class="bg-slate-100 min-h-screen font-sans pb-12">
 
     <?php include 'header.php'; ?>
 
     <div class="max-w-5xl mx-auto px-4 mt-8">
-
+        
         <?php if (isset($_GET['sucesso'])): ?>
-            <div class="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 mb-6 rounded-lg font-bold flex gap-2"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                </svg> <?= htmlspecialchars($_GET['sucesso']) ?></div>
+            <div class="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 mb-6 rounded-lg font-bold flex gap-2"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> <?= htmlspecialchars($_GET['sucesso']) ?></div>
         <?php endif; ?>
         <?php if (isset($_GET['erro'])): ?>
-            <div class="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 mb-6 rounded-lg font-bold flex gap-2"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg> Erro: <?= htmlspecialchars($_GET['erro']) ?></div>
+            <div class="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 mb-6 rounded-lg font-bold flex gap-2"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Erro: <?= htmlspecialchars($_GET['erro']) ?></div>
         <?php endif; ?>
 
         <?php if (!$apontamento_ativo): ?>
-
+            
             <div class="bg-white p-8 rounded-2xl shadow border border-slate-200 text-center max-w-2xl mx-auto relative overflow-hidden">
                 <div class="absolute top-0 right-0 flex flex-col items-end gap-1.5">
                     <div class="bg-emerald-500 text-white px-5 py-3 rounded-bl-2xl shadow-sm border-b border-l border-emerald-600">
@@ -154,25 +135,23 @@ try {
                 </div>
 
                 <div class="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 mt-4">
-                    <svg class="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path>
-                    </svg>
+                    <svg class="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>
                 </div>
                 <h2 class="text-2xl font-black text-slate-800 mb-2">Máquina Parada</h2>
                 <p class="text-slate-500 font-medium mb-8">Verifique a fila de produção abaixo</p>
-
+                
                 <form action="acao_apontamento.php" method="POST" class="space-y-5 text-left">
                     <input type="hidden" name="acao" value="iniciar">
-
+                    
                     <div>
                         <label class="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">1. Fila de Produção da Linha (ordem definida pelo PCP)</label>
                         <div class="space-y-2 max-h-80 overflow-y-auto pr-1">
                             <?php if (empty($ops_disponiveis)): ?>
                                 <div class="text-center p-6 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-semibold text-sm">Nenhuma OP na fila desta linha.</div>
                             <?php endif; ?>
-                            <?php
+                            <?php 
                             $hoje = date('Y-m-d');
-                            foreach ($ops_disponiveis as $idx => $op):
+                            foreach ($ops_disponiveis as $idx => $op): 
                                 $is_liberada = ($op['status'] === 'AGUARDANDO INICIO');
 
                                 $data_plan = $op['data_planejada'];
@@ -206,32 +185,20 @@ try {
                                         $tag_status = 'Liberada para Início';
                                         $cor_status = 'bg-emerald-100 text-emerald-700 border-emerald-200';
                                 }
-                            ?><div class="block p-3 rounded-xl border-2 transition-colors <?= $is_liberada ? 'border-slate-200 hover:border-blue-400 has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50' : 'border-slate-100 bg-slate-50' ?>">
+                            ?>
+                                <label onclick="toggleProdutosOP(<?= $op['id'] ?>)" class="block p-3 rounded-xl border-2 transition-colors <?= $is_liberada ? 'border-slate-200 hover:border-blue-400 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50' : 'border-slate-100 bg-slate-50 cursor-pointer' ?>">
                                     <div class="flex items-center gap-3">
-                                        <!-- ÁREA 1: SELECIONAR A OP -->
-                                        <label class="flex-1 flex items-center gap-3 cursor-pointer min-w-0">
-                                            <input type="radio" name="op_id" value="<?= $op['id'] ?>" <?= $is_liberada ? 'required' : 'disabled' ?> class="w-5 h-5 text-blue-600 shrink-0 cursor-pointer">
-                                            <div class="w-7 h-7 flex items-center justify-center rounded-full bg-slate-200 text-slate-600 font-black text-xs shrink-0"><?= $idx + 1 ?></div>
+                                        <input type="radio" name="op_id" value="<?= $op['id'] ?>" <?= $is_liberada ? 'required' : 'disabled' ?> class="w-5 h-5 text-blue-600 shrink-0">
+                                        <div class="w-7 h-7 flex items-center justify-center rounded-full bg-slate-200 text-slate-600 font-black text-xs shrink-0"><?= $idx + 1 ?></div>
+                                        <div class="flex-1 min-w-0">
                                             <div class="flex flex-wrap items-center gap-2">
                                                 <span class="font-black text-slate-800 text-sm <?= $is_liberada ? '' : 'opacity-70' ?>">OP <?= htmlspecialchars($op['op_sistema']) ?></span>
                                                 <span class="text-[10px] font-bold uppercase <?= $cor_data ?>"><?= $tag_data ?></span>
                                             </div>
-                                        </label>
-
-                                        <!-- STATUS DA OP -->
+                                        </div>
                                         <span class="px-2 py-1 rounded text-[9px] font-bold uppercase border shrink-0 <?= $cor_status ?>"><?= $tag_status ?></span>
-
-                                        <!-- ÁREA 2: BOTÃO DEDICADO PARA VER PRODUTOS -->
-                                        <?php if (!empty($op['produtos'])): ?>
-                                            <button type="button" onclick="toggleProdutosOP(<?= $op['id'] ?>)" class="w-8 h-8 flex items-center justify-center bg-white text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors shrink-0 border border-slate-200 shadow-sm" title="Ver Produtos da OP">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
-                                                </svg>
-                                            </button>
-                                        <?php endif; ?>
+                                        <svg class="w-4 h-4 text-slate-300 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg>
                                     </div>
-
-                                    <!-- LISTA DE PRODUTOS OCULTA -->
                                     <?php if (!empty($op['produtos'])): ?>
                                         <div id="produtos_op_<?= $op['id'] ?>" class="hidden mt-3 pt-3 border-t border-slate-200 space-y-1.5">
                                             <?php foreach ($op['produtos'] as $prod): ?>
@@ -242,7 +209,7 @@ try {
                                             <?php endforeach; ?>
                                         </div>
                                     <?php endif; ?>
-                                </div>
+                                </label>
                             <?php endforeach; ?>
                         </div>
                     </div>
@@ -259,36 +226,36 @@ try {
                     </div>
 
                     <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-black text-lg py-4 rounded-xl shadow-lg hover:shadow-blue-500/30 transition-all flex items-center justify-center gap-3 mt-4">
-                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M4 4l12 6-12 6z"></path>
-                        </svg>
+                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6z"></path></svg>
                         INICIAR PRODUÇÃO
                     </button>
                 </form>
             </div>
 
-           <script>
-    function toggleProdutosOP(opId) {
-        const el = document.getElementById('produtos_op_' + opId);
-        if (el) el.classList.toggle('hidden');
-    }
-</script>
+            <script>
+                function toggleProdutosOP(opId) {
+                    const el = document.getElementById('produtos_op_' + opId);
+                    if (el) el.classList.toggle('hidden');
+                }
+            </script>
 
         <?php else: ?>
-            <?php
-            $is_paused = !empty($apontamento_ativo['parada_inicio']);
-            $cor_bg = $is_paused ? 'bg-rose-50 border-rose-200' : 'bg-white border-blue-200 shadow-blue-900/5';
-            $cor_texto = $is_paused ? 'text-rose-900' : 'text-slate-800';
-            $cor_badge = $is_paused ? 'bg-rose-500' : 'bg-emerald-500';
-            $status_texto = $is_paused ? 'MÁQUINA PAUSADA' : 'MÁQUINA RODANDO';
-
-            $hora_inicio = new DateTime($apontamento_ativo['hora_inicio']);
-            $agora = new DateTime();
-            $diff_minutos = $hora_inicio->diff($agora)->i + ($hora_inicio->diff($agora)->h * 60) + ($hora_inicio->diff($agora)->days * 24 * 60);
+            <?php 
+                $is_paused = !empty($apontamento_ativo['parada_inicio']);
+                $cor_bg = $is_paused ? 'bg-rose-50 border-rose-200' : 'bg-white border-blue-200 shadow-blue-900/5';
+                $cor_texto = $is_paused ? 'text-rose-900' : 'text-slate-800';
+                $cor_badge = $is_paused ? 'bg-rose-500' : 'bg-emerald-500';
+                $status_texto = $is_paused ? 'MÁQUINA PAUSADA' : 'MÁQUINA RODANDO';
+                
+                $hora_inicio = new DateTime($apontamento_ativo['hora_inicio']);
+                $agora = new DateTime();
+                $diff_minutos = $hora_inicio->diff($agora)->i + ($hora_inicio->diff($agora)->h * 60) + ($hora_inicio->diff($agora)->days * 24 * 60);
             ?>
 
-            <div class="<?= $cor_bg ?> p-6 md:p-10 rounded-3xl shadow-xl border-2 transition-colors relative overflow-hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
+            <div class="<?= $cor_bg ?> p-6 md:p-10 rounded-3xl shadow-xl border-2 transition-colors relative overflow-hidden lg:col-span-2">
+                
                 <div class="absolute top-0 right-0 bg-emerald-500 text-white px-5 py-3 rounded-bl-3xl shadow-sm border-b border-l border-emerald-600 z-10">
                     <span class="block text-[9px] font-bold uppercase tracking-widest opacity-90">Produzido Hoje (Linha)</span>
                     <span class="text-2xl font-black leading-none"><?= number_format($total_hoje, 0, ',', '.') ?> <span class="text-xs font-semibold opacity-80">un</span></span>
@@ -306,10 +273,10 @@ try {
                         <h1 class="text-4xl md:text-5xl font-black text-slate-900 uppercase">OP: <?= htmlspecialchars($apontamento_ativo['ordem_producao']) ?></h1>
                         <p class="text-sm font-bold text-slate-500 mt-2">Operador: <?= htmlspecialchars($apontamento_ativo['nome_operador']) ?></p>
                     </div>
-
+                    
                     <div class="text-right">
                         <span class="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-1">Tempo Total</span>
-                        <div class="text-3xl md:text-4xl font-mono font-black <?= $cor_texto ?>"><?= str_pad(floor($diff_minutos / 60), 2, '0', STR_PAD_LEFT) ?>:<?= str_pad($diff_minutos % 60, 2, '0', STR_PAD_LEFT) ?></div>
+                        <div id="relogio_turno" data-hora-inicio="<?= htmlspecialchars($apontamento_ativo['hora_inicio']) ?>" class="text-3xl md:text-4xl font-mono font-black <?= $cor_texto ?>"><?= str_pad(floor($diff_minutos / 60), 2, '0', STR_PAD_LEFT) ?>:<?= str_pad($diff_minutos % 60, 2, '0', STR_PAD_LEFT) ?></div>
                     </div>
                 </div>
 
@@ -328,12 +295,10 @@ try {
                 <?php endif; ?>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
-
+                    
                     <?php if (!$is_paused): ?>
                         <button onclick="document.getElementById('modal_pausar').showModal()" class="w-full bg-amber-400 hover:bg-amber-500 text-amber-950 font-black text-xl py-5 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-3">
-                            <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-                            </svg>
+                            <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
                             PAUSAR MÁQUINA
                         </button>
                     <?php else: ?>
@@ -342,9 +307,7 @@ try {
                             <input type="hidden" name="apontamento_id" value="<?= $apontamento_ativo['id'] ?>">
                             <input type="hidden" name="op_id" value="<?= $apontamento_ativo['op_id'] ?>">
                             <button type="submit" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xl py-5 rounded-2xl shadow-lg hover:shadow-emerald-500/40 transition-all flex items-center justify-center gap-3">
-                                <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>
-                                </svg>
+                                <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path></svg>
                                 RETOMAR PRODUÇÃO
                             </button>
                         </form>
@@ -356,13 +319,58 @@ try {
                         </button>
                     <?php else: ?>
                         <button onclick="abrirModalFinalizar()" class="w-full bg-slate-900 hover:bg-black text-white font-black text-xl py-5 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-3">
-                            <svg class="w-8 h-8 text-rose-500" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path>
-                            </svg>
+                            <svg class="w-8 h-8 text-rose-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
                             FINALIZAR TURNO
                         </button>
                     <?php endif; ?>
                 </div>
+            </div>
+
+            <!-- FILA DE PRIORIDADES -- só informativa aqui (a máquina já
+                 está rodando, não dá pra selecionar outra OP agora), pra
+                 o operador ver o que vem a seguir sem ter que finalizar
+                 o turno atual primeiro pra checar. -->
+            <div class="bg-white rounded-3xl shadow-xl border-2 border-slate-100 p-5 lg:col-span-1 flex flex-col max-h-[600px]">
+                <div class="flex items-center justify-between mb-4 shrink-0">
+                    <h3 class="text-sm font-black text-slate-700 uppercase tracking-wide">Próximas na Fila</h3>
+                    <span class="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-full"><?= count($ops_disponiveis) ?></span>
+                </div>
+                <div class="space-y-2 overflow-y-auto pr-1 grow">
+                    <?php if (empty($ops_disponiveis)): ?>
+                        <div class="text-center p-6 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-semibold text-xs">Fila vazia no momento.</div>
+                    <?php endif; ?>
+                    <?php
+                    $hoje_fila = date('Y-m-d');
+                    foreach ($ops_disponiveis as $idx_fila => $op_f):
+                        $is_lib_f = ($op_f['status'] === 'AGUARDANDO INICIO');
+                        switch ($op_f['status']) {
+                            case 'PROGRAMADO':
+                                $tag_f = 'Sep. + Form.'; $cor_f = 'bg-slate-100 text-slate-600';
+                                break;
+                            case 'AGUARDANDO FORMULACAO':
+                                $tag_f = 'Aguard. Form.'; $cor_f = 'bg-purple-100 text-purple-700';
+                                break;
+                            case 'AGUARDANDO ALMOXARIFADO':
+                                $tag_f = 'Aguard. Sep.'; $cor_f = 'bg-cyan-100 text-cyan-700';
+                                break;
+                            default:
+                                $tag_f = 'Liberada'; $cor_f = 'bg-emerald-100 text-emerald-700';
+                        }
+                    ?>
+                        <div class="p-2.5 rounded-lg border <?= $is_lib_f ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-100 bg-slate-50' ?>">
+                            <div class="flex items-center gap-2">
+                                <div class="w-5 h-5 flex items-center justify-center rounded-full bg-slate-200 text-slate-600 font-black text-[10px] shrink-0"><?= $idx_fila + 1 ?></div>
+                                <span class="font-black text-slate-800 text-xs truncate flex-1">OP <?= htmlspecialchars($op_f['op_sistema']) ?></span>
+                                <span class="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase shrink-0 <?= $cor_f ?>"><?= $tag_f ?></span>
+                            </div>
+                            <?php if (!empty($op_f['produtos'])): ?>
+                                <p class="text-[10px] text-slate-400 font-semibold mt-1 truncate pl-7"><?= htmlspecialchars($op_f['produtos'][0]['codigo']) ?> · <?= htmlspecialchars($op_f['produtos'][0]['descricao']) ?><?= count($op_f['produtos']) > 1 ? ' +' . (count($op_f['produtos']) - 1) : '' ?></p>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+
             </div>
 
             <!-- MODAL DE PAUSA -->
@@ -370,15 +378,13 @@ try {
                 <form action="acao_apontamento.php" method="POST" class="flex flex-col">
                     <div class="bg-amber-400 p-6 flex justify-between items-center rounded-t-3xl">
                         <h3 class="text-xl font-black text-amber-950">Por que a máquina parou?</h3>
-                        <button type="button" onclick="this.closest('dialog').close()" class="text-amber-900 hover:bg-amber-300 rounded-full p-2"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path>
-                            </svg></button>
+                        <button type="button" onclick="this.closest('dialog').close()" class="text-amber-900 hover:bg-amber-300 rounded-full p-2"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg></button>
                     </div>
                     <div class="p-8">
                         <input type="hidden" name="acao" value="pausar">
                         <input type="hidden" name="apontamento_id" value="<?= $apontamento_ativo['id'] ?>">
                         <input type="hidden" name="op_id" value="<?= $apontamento_ativo['op_id'] ?>">
-
+                        
                         <label class="block text-sm font-bold text-slate-600 mb-3 uppercase tracking-wide">Selecione o Motivo da Parada:</label>
                         <select name="motivo_id" required class="w-full px-4 py-4 border-2 border-slate-200 rounded-xl font-bold text-slate-800 focus:border-amber-400 focus:ring-0 appearance-none text-lg">
                             <option value="">-- Escolha --</option>
@@ -397,14 +403,19 @@ try {
             <dialog id="modal_finalizar" class="p-0 rounded-3xl shadow-2xl border-0 w-[95%] max-w-4xl bg-white m-auto backdrop:bg-slate-900/80 backdrop:backdrop-blur-sm max-h-[90vh]">
                 <form id="form_finalizar" action="acao_apontamento.php" method="POST" class="flex flex-col h-full w-full" onsubmit="return validarFinalizacao(event)">
 
-                    <div class="bg-slate-900 p-6 flex justify-between items-center rounded-t-3xl shrink-0">
-                        <div>
-                            <span class="text-blue-400 font-bold text-xs uppercase tracking-widest block mb-1">Passo Final</span>
-                            <h3 class="text-2xl font-black text-white">Declarar Produção e Encerrar</h3>
+                    <div class="bg-slate-50 border-b border-slate-100 p-5 flex justify-between items-center shrink-0 rounded-t-3xl">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>
+                            </div>
+                            <div>
+                                <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Declarar Produção e Encerrar</h3>
+                                <p class="text-xs font-medium text-slate-400">Passo final -- calcula o OEE do turno</p>
+                            </div>
                         </div>
-                        <button type="button" onclick="this.closest('dialog').close()" class="text-slate-400 hover:text-white rounded-full p-2"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path>
-                            </svg></button>
+                        <button type="button" onclick="this.closest('dialog').close()" class="text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg p-1.5 transition-colors">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
                     </div>
 
                     <div class="p-6 md:p-8 overflow-y-auto grow bg-slate-50 space-y-8">
@@ -421,7 +432,7 @@ try {
                         <!-- SEÇÃO 2: PERDAS OBRIGATÓRIAS -->
                         <div>
                             <h4 class="font-bold text-slate-800 mb-3 border-b border-slate-200 pb-2">2. Controle de Perdas (Obrigatório)</h4>
-
+                            
                             <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm mb-4">
                                 <p class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Houve perda ou destruição de materiais neste turno?</p>
                                 <div class="flex flex-col md:flex-row gap-6">
@@ -450,9 +461,7 @@ try {
 
                     <div class="p-6 border-t border-slate-200 bg-white rounded-b-3xl shrink-0">
                         <button type="submit" class="w-full bg-emerald-500 text-white font-black py-4 rounded-xl text-lg hover:bg-emerald-600 shadow-lg transition-all flex items-center justify-center gap-2">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path>
-                            </svg>
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
                             SALVAR DADOS E CALCULAR OEE
                         </button>
                     </div>
@@ -463,13 +472,11 @@ try {
             <dialog id="modal_alerta_excedente" class="p-0 rounded-3xl shadow-2xl border-0 w-[95%] max-w-md bg-white m-auto backdrop:bg-slate-900/80 backdrop:backdrop-blur-sm">
                 <div class="p-8 text-center">
                     <div class="w-16 h-16 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-                        </svg>
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                     </div>
                     <h3 class="text-2xl font-black text-slate-800 mb-2">Produção Excedente!</h3>
                     <p class="text-sm font-semibold text-slate-600 mb-8 leading-relaxed">Você está a lançar <span id="qtd_excedente_texto" class="text-amber-600 font-black text-lg mx-1"></span> unidade(s) a mais que a meta estipulada para esta OP.<br>Deseja realmente confirmar este excedente?</p>
-
+                    
                     <div class="flex gap-3">
                         <button type="button" onclick="document.getElementById('modal_alerta_excedente').close()" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3.5 rounded-xl transition-colors">Voltar e Revisar</button>
                         <button type="button" onclick="confirmarExcedenteForcado()" class="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-black py-3.5 rounded-xl shadow-lg hover:shadow-amber-500/30 transition-all">Sim, Confirmar</button>
@@ -492,9 +499,7 @@ try {
                             <input type="number" name="item_qtd[]" placeholder="Qtd" required min="1" class="w-full px-3 py-2 text-sm font-bold text-rose-600 border border-slate-300 rounded-md focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 pr-8">
                             <span class="absolute right-3 top-2 text-xs font-bold text-slate-400">un</span>
                         </div>
-                        <button type="button" onclick="this.closest('.perda-item').remove()" class="text-slate-400 hover:text-rose-600 bg-slate-50 hover:bg-rose-50 p-2 rounded-md transition-colors shrink-0"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path>
-                            </svg></button>
+                        <button type="button" onclick="this.closest('.perda-item').remove()" class="text-slate-400 hover:text-rose-600 bg-slate-50 hover:bg-rose-50 p-2 rounded-md transition-colors shrink-0"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg></button>
                     </div>
                     <!-- Área onde o insumo escolhido aparece depois de selecionado na busca -->
                     <div class="display-desc-insumo text-xs font-bold text-slate-400 px-1">Nenhum insumo selecionado ainda.</div>
@@ -518,11 +523,11 @@ try {
 
                     const containerProds = document.getElementById('container_produtos_dinamicos');
                     containerProds.innerHTML = '<div class="text-sm font-medium text-blue-500 py-4">Carregando estrutura...</div>';
-
+                    
                     try {
                         const resposta = await fetch(`get_detalhes_op.php?op_id=${opId}`);
                         const dados = await resposta.json();
-
+                        
                         containerProds.innerHTML = '';
                         dados.produtos.forEach(p => {
                             const htmlProd = `
@@ -572,7 +577,7 @@ try {
                         document.getElementById('modal_alerta_excedente').showModal(); // Abre nossa modal customizada
                         return false;
                     }
-                    return true;
+                    return true; 
                 }
 
                 function confirmarExcedenteForcado() {
@@ -584,7 +589,7 @@ try {
                 // Controle das Perdas Dinâmicas
                 function abrirBlocoPerdas() {
                     document.getElementById('bloco_perdas').classList.remove('hidden');
-                    if (document.getElementById('container_perdas_dinamicas').children.length === 0) {
+                    if(document.getElementById('container_perdas_dinamicas').children.length === 0) {
                         adicionarInsumoAvulso();
                     }
                 }
@@ -668,7 +673,7 @@ try {
                 }
 
                 // Fecha qualquer dropdown de busca de insumo aberto se clicar fora dele
-                document.addEventListener('click', function(e) {
+                document.addEventListener('click', function (e) {
                     if (!e.target.closest('.perda-item')) {
                         document.querySelectorAll('.resultados-busca-insumo').forEach(el => el.classList.add('hidden'));
                     }
@@ -677,6 +682,46 @@ try {
 
         <?php endif; ?>
     </div>
-</body>
 
+    <script>
+        // ==========================================
+        // RELÓGIO AO VIVO (só existe na tela "Máquina Rodando" --
+        // o elemento não existe na tela "Máquina Parada", por isso o
+        // if guarda contra erro nula ali).
+        // ==========================================
+        function atualizarRelogioTurno() {
+            const el = document.getElementById('relogio_turno');
+            if (!el) return;
+            const inicio = new Date(el.dataset.horaInicio.replace(' ', 'T'));
+            const agora = new Date();
+            const diffMin = Math.max(0, Math.floor((agora - inicio) / 60000));
+            const horas = String(Math.floor(diffMin / 60)).padStart(2, '0');
+            const minutos = String(diffMin % 60).padStart(2, '0');
+            el.textContent = `${horas}:${minutos}`;
+        }
+        atualizarRelogioTurno();
+        setInterval(atualizarRelogioTurno, 15000); // atualiza a cada 15s -- suave, sem sobrecarregar
+
+        // ==========================================
+        // AUTO-ATUALIZAÇÃO DA TELA A CADA 5 MINUTOS -- o tempo do turno
+        // (acima) já se corrige sozinho sem reload, mas a fila de
+        // prioridades, o "Produzido Hoje" e o "Liberado p/ Produção"
+        // só vêm do servidor, então a página precisa recarregar de
+        // tempos em tempos pra não ficar com esses dados desatualizados
+        // se o operador não der F5 manualmente.
+        //
+        // Nunca recarrega com uma modal aberta (perderia o que o
+        // operador já tinha preenchido) -- só verifica de novo em 30s.
+        // ==========================================
+        function tentarRecarregarTela() {
+            const modalAberta = document.querySelector('dialog[open]');
+            if (modalAberta) {
+                setTimeout(tentarRecarregarTela, 30000); // reverifica em 30s, sem reiniciar os 5min
+            } else {
+                window.location.reload();
+            }
+        }
+        setTimeout(tentarRecarregarTela, 5 * 60 * 1000);
+    </script>
+</body>
 </html>

@@ -36,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['CONTENT_TYPE']) && 
 
     try {
         $pdo->beginTransaction();
-        $stmt_check = $pdo->prepare("SELECT id FROM ordens_producao WHERE linha_id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'AGUARDANDO ALMOXARIFADO', 'AGUARDANDO INICIO')");
+        $stmt_check = $pdo->prepare("SELECT id FROM ordens_producao WHERE linha_id = ? AND status IN ('PROGRAMADO', 'AGUARDANDO FORMULACAO', 'AGUARDANDO ALMOXARIFADO', 'AGUARDANDO INICIO', 'PENDENCIA')");
         $stmt_check->execute([$linha_id]);
         $ids_validos = $stmt_check->fetchAll(PDO::FETCH_COLUMN);
 
@@ -315,7 +315,7 @@ try {
     // Separa os dados para a Esteira (fila ainda dentro do duplo gate)
     $ops_esteira = [];
     foreach ($todas_ops as $op) {
-        if (in_array(normalizaStatus($op['status']), ['PROGRAMADO', 'AGUARDANDO FORMULACAO', 'AGUARDANDO ALMOXARIFADO', 'AGUARDANDO INICIO'])) {
+        if (in_array(normalizaStatus($op['status']), ['PROGRAMADO', 'AGUARDANDO FORMULACAO', 'AGUARDANDO ALMOXARIFADO', 'AGUARDANDO INICIO', 'PENDENCIA'])) {
             $ops_esteira[$op['linha_id']][] = $op;
         }
     }
@@ -350,7 +350,7 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Módulo PCP - Inteligência MES</title>
-        <link rel="icon" type="image/png" href="logo.png">
+    <link rel="icon" type="image/png" href="logo.png">
 
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -443,9 +443,9 @@ try {
                 <div class="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
                     <div class="flex items-center gap-2">
                         <svg class="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                        <p class="text-xs text-slate-600 font-medium">Planilha modelo</p>
+                        <p class="text-xs text-slate-600 font-medium">Não sabe o formato esperado? Baixe o modelo antes de montar sua planilha.</p>
                     </div>
-                    <a href="planilha_linhas_producao.xlsx" download class="shrink-0 inline-flex items-center gap-1.5 bg-white border border-slate-300 text-slate-700 hover:border-emerald-400 hover:text-emerald-700 font-bold text-xs px-3 py-2 rounded-lg transition-colors">
+                    <a href="modelo_importacao_ops.xlsx" download class="shrink-0 inline-flex items-center gap-1.5 bg-white border border-slate-300 text-slate-700 hover:border-emerald-400 hover:text-emerald-700 font-bold text-xs px-3 py-2 rounded-lg transition-colors">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                         Baixar Modelo (.xlsx)
                     </a>

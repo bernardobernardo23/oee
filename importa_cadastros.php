@@ -46,7 +46,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
         // Detecta se a primeira linha é cabeçalho (contém "codigo" ou
         // "tipo" em qualquer capitalização) e pula ela nesse caso.
         $primeira = array_map(fn($v) => strtolower(trim((string)$v)), $linhas[0] ?? []);
-        if (in_array('codigo', $primeira) || in_array('tipo', $primeira)) {
+        $cabecalho_removido = in_array('codigo', $primeira) || in_array('tipo', $primeira);
+        if ($cabecalho_removido) {
             array_shift($linhas);
         }
 
@@ -68,7 +69,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
         $linhas_tipo_nao_tratado = 0;
         $linhas_invalidas = 0;
 
+        // Log detalhado -- uma entrada por linha ignorada/inválida, com
+        // o motivo exato. É o que permite responder "por que meu produto
+        // X não entrou?" sem precisar adivinhar a partir de um número
+        // agregado. $numero_linha acompanha a posição REAL na planilha
+        // (conta o cabeçalho removido, se houve, pra bater com o Excel).
+        $log_itens = [];
+        $numero_linha = $cabecalho_removido ? 1 : 0;
+
         foreach ($linhas as $linha) {
+            $numero_linha++;
+
             // Layout esperado: Codigo(A) | Descricao(B) | Tipo(C)
             $codigo = trim((string)($linha[0] ?? ''));
             $descricao = trim((string)($linha[1] ?? ''));
@@ -76,12 +87,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
 
             if ($codigo === '' || $descricao === '') {
                 $linhas_invalidas++;
+                $motivo_invalida = $codigo === '' ? 'Linha sem código' : 'Linha sem descrição';
+                $log_itens[] = [$numero_linha, $codigo ?: null, $descricao ?: null, $tipo_planilha ?: null, 'LINHA_INVALIDA', $motivo_invalida];
                 continue;
             }
 
             if ($tipo_planilha === 'PA') {
                 if (isset($produtos_existentes[$codigo])) {
                     $produtos_ignorados_duplicados++;
+                    $log_itens[] = [$numero_linha, $codigo, $descricao, $tipo_planilha, 'DUPLICADO_PRODUTO', "Código {$codigo} já existe em Produtos -- não foi sobrescrito"];
                     continue;
                 }
                 $stmt_insere_produto->execute([$codigo, $descricao]);
@@ -90,6 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
             } elseif ($tipo_planilha === 'EM') {
                 if (isset($componentes_existentes[$codigo])) {
                     $componentes_ignorados_duplicados++;
+                    $log_itens[] = [$numero_linha, $codigo, $descricao, $tipo_planilha, 'DUPLICADO_COMPONENTE', "Código {$codigo} já existe em Insumos -- não foi sobrescrito"];
                     continue;
                 }
                 $subtipo = inferir_subtipo_componente($descricao);
@@ -100,6 +115,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
                 // Qualquer outro Tipo (MP, PI, OI, MC, AI, SV, ME, GN, GG, KT...)
                 // é ignorado -- o sistema hoje só sabe tratar PA e EM.
                 $linhas_tipo_nao_tratado++;
+                $tipo_exibido = $tipo_planilha !== '' ? $tipo_planilha : '(vazio)';
+                $log_itens[] = [$numero_linha, $codigo, $descricao, $tipo_planilha, 'TIPO_NAO_TRATADO', "Tipo '{$tipo_exibido}' não é reconhecido pelo sistema (só PA e EM)"];
+            }
+        }
+
+        // Grava o log permanente da importação -- resumo + cada item
+        // ignorado com motivo. $log_importacao_id fica na sessão pra
+        // cadastros.php oferecer o link de download logo em seguida.
+        $stmt_log_cabecalho = $pdo->prepare("
+            INSERT INTO importacoes_log (usuario_id, nome_arquivo, total_produtos_inseridos, total_componentes_inseridos, total_ignorados)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        $total_ignorados_geral = $produtos_ignorados_duplicados + $componentes_ignorados_duplicados + $linhas_tipo_nao_tratado + $linhas_invalidas;
+        $stmt_log_cabecalho->execute([
+            $_SESSION['usuario_id'],
+            $file['name'],
+            $produtos_inseridos,
+            $componentes_inseridos,
+            $total_ignorados_geral,
+        ]);
+        $log_importacao_id = $pdo->lastInsertId();
+
+        if (!empty($log_itens)) {
+            $stmt_log_item = $pdo->prepare("
+                INSERT INTO importacoes_log_itens (importacao_id, linha_planilha, codigo, descricao, tipo_planilha, categoria, motivo)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ");
+            foreach ($log_itens as $item) {
+                $stmt_log_item->execute([$log_importacao_id, $item[0], $item[1], $item[2], $item[3], $item[4], $item[5]]);
             }
         }
 
@@ -119,9 +163,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
         if (!empty($detalhes)) {
             $mensagem .= " Também foram ignoradas: " . implode(', ', $detalhes) . ".";
         }
+        if ($total_ignorados_geral > 0) {
+            $mensagem .= " Baixe o log detalhado pra ver linha por linha o que foi ignorado e o motivo.";
+        }
 
         $_SESSION['flash_mensagem'] = $mensagem;
         $_SESSION['flash_tipo'] = 'sucesso';
+        $_SESSION['flash_log_importacao_id'] = $log_importacao_id;
         header("Location: cadastros.php");
         exit;
     } catch (Exception $e) {

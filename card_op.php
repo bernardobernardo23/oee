@@ -104,10 +104,6 @@ if (!function_exists('render_op_card_scripts')) {
 //                    Fila e modal_op_pend_ID nas Pendências)
 // $botao_texto     : texto do botão único no contexto operacional
 // ----------------------------------------------------------------
-// ----------------------------------------------------------------
-// O CARD EM SI: estrutura visual mais leve, com melhor hierarquia
-// tipográfica (menos font-black, mais font-medium/semibold).
-// ----------------------------------------------------------------
 if (!function_exists('render_op_card')) {
     function render_op_card(
         array $op,
@@ -141,58 +137,55 @@ if (!function_exists('render_op_card')) {
 
         <div class="flex items-start gap-3">
             <!-- posição / ícone neutro -->
-            <div class="w-9 h-9 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0 mt-0.5 <?= $draggable ? 'cursor-grab active:cursor-grabbing' : '' ?>">
+            <div class="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center shrink-0 mt-0.5 <?= $draggable ? 'cursor-grab active:cursor-grabbing' : '' ?>">
                 <?php if ($mostrar_posicao): ?>
-                    <span class="text-sm font-semibold text-slate-500 posicao-badge"><?= $idx + 1 ?></span>
+                    <span class="text-sm font-black text-slate-700 posicao-badge"><?= $idx + 1 ?></span>
                 <?php else: ?>
                     <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"></path></svg>
                 <?php endif; ?>
             </div>
 
             <div class="flex-1 min-w-0">
-                <!-- OP e data -->
+                <!-- OP e data em destaque -->
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-xl font-bold text-slate-800 tracking-tight">OP <?= htmlspecialchars($op['op_sistema']) ?></span>
-                        <span class="bg-<?= $cor_st ?>-50 text-<?= $cor_st ?>-700 border border-<?= $cor_st ?>-200 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded"><?= $label_st ?></span>
+                        <span class="text-2xl font-black text-slate-900 tracking-tight"><?= htmlspecialchars($op['op_sistema']) ?></span>
+                        <span class="bg-<?= $cor_st ?>-100 text-<?= $cor_st ?>-800 text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded"><?= $label_st ?></span>
                         <?php if ($show_linha_badge): ?>
-                            <span class="bg-slate-50 text-slate-500 text-[10px] font-medium uppercase tracking-wide px-2 py-0.5 rounded border border-slate-200">Fáb <?= $op['fabrica'] ?> · <?= htmlspecialchars($op['linha_nome']) ?></span>
+                            <span class="bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded border border-slate-200">Fáb <?= $op['fabrica'] ?> · <?= htmlspecialchars($op['linha_nome']) ?></span>
                         <?php endif; ?>
                     </div>
-                    <span class="text-sm font-medium text-slate-500 shrink-0 flex items-center gap-1">
-                        <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                        <?= date('d/m/Y', strtotime($op['data_planejada'])) ?>
-                    </span>
+                    <span class="text-sm font-black text-slate-700 shrink-0">📅 <?= date('d/m/Y', strtotime($op['data_planejada'])) ?></span>
                 </div>
 
                 <!-- selos de progresso -->
-                <div class="flex items-center gap-2 flex-wrap mb-3">
-                    <span class="text-[11px] font-semibold uppercase tracking-wide <?= $sep_ok ? 'text-emerald-600' : 'text-slate-400' ?>"><?= $sep_ok ? '✓' : '···' ?> Separação</span>
-                    <span class="text-[11px] text-slate-300">|</span>
-                    <span class="text-[11px] font-semibold uppercase tracking-wide <?= $form_ok ? 'text-emerald-600' : 'text-slate-400' ?>"><?= $form_ok ? '✓' : '···' ?> Formulação</span>
+                <div class="flex items-center gap-2 flex-wrap mb-2">
+                    <span class="text-[11px] font-black uppercase tracking-wide <?= $sep_ok ? 'text-emerald-600' : 'text-slate-400' ?>"><?= $sep_ok ? '✓' : '···' ?> Separação</span>
+                    <span class="text-[11px] font-black text-slate-300">|</span>
+                    <span class="text-[11px] font-black uppercase tracking-wide <?= $form_ok ? 'text-emerald-600' : 'text-slate-400' ?>"><?= $form_ok ? '✓' : '···' ?> Formulação</span>
                 </div>
 
                 <?php if ($tem_pend_almox): ?>
-                    <div class="bg-rose-50/50 border border-rose-200 rounded-lg px-3 py-2 mb-2">
-                        <p class="text-xs text-rose-700"><span class="font-semibold uppercase tracking-wide">Pendência Almoxarifado:</span> Estoque insuficiente<?= !empty($op['pendencia_almox_obs']) ? ' — <span class="font-medium">' . htmlspecialchars($op['pendencia_almox_obs']) . '</span>' : '' ?></p>
+                    <div class="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-2">
+                        <p class="text-xs text-rose-700"><span class="font-black uppercase tracking-wide">Pendência Almoxarifado:</span> Estoque insuficiente<?= !empty($op['pendencia_almox_obs']) ? ' — ' . htmlspecialchars($op['pendencia_almox_obs']) : '' ?></p>
                     </div>
                 <?php endif; ?>
                 <?php if ($tem_pend_form): ?>
-                    <div class="bg-rose-50/50 border border-rose-200 rounded-lg px-3 py-2 mb-2">
-                        <p class="text-xs text-rose-700"><span class="font-semibold uppercase tracking-wide">Pendência Formulação:</span> <?= htmlspecialchars($motivos_labels[$op['pendencia_form_motivo']] ?? 'Motivo não informado') ?><?= !empty($op['pendencia_form_obs']) ? ' — <span class="font-medium">' . htmlspecialchars($op['pendencia_form_obs']) . '</span>' : '' ?></p>
+                    <div class="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-2">
+                        <p class="text-xs text-rose-700"><span class="font-black uppercase tracking-wide">Pendência Formulação:</span><?= !empty($op['pendencia_form_obs']) ? ' ' . htmlspecialchars($op['pendencia_form_obs']) : ' Pendência registrada' ?></p>
                     </div>
                 <?php endif; ?>
 
                 <?php if (!empty($op['observacao_almoxarifado'])): ?>
-                    <p class="text-xs text-slate-600 mb-2"><span class="font-semibold text-slate-700">Obs. PCP:</span> <?= htmlspecialchars($op['observacao_almoxarifado']) ?></p>
+                    <p class="text-xs text-slate-500 mb-2"><span class="font-bold text-slate-600">Obs. PCP:</span> <?= htmlspecialchars($op['observacao_almoxarifado']) ?></p>
                 <?php endif; ?>
 
-                <!-- produtos -->
-                <div class="space-y-1.5 mt-1">
+                <!-- produtos com quantidade em destaque -->
+                <div class="space-y-1.5">
                     <?php foreach ($op['produtos'] as $prod): ?>
-                        <div class="flex items-center justify-between gap-3 bg-slate-50/50 rounded-lg px-3 py-2 border border-slate-100/80">
-                            <span class="text-sm text-slate-700 min-w-0 truncate"><span class="font-medium text-slate-400">#<?= htmlspecialchars($prod['codigo']) ?></span> <?= htmlspecialchars($prod['descricao']) ?></span>
-                            <span class="text-base font-bold text-slate-800 shrink-0"><?= number_format($prod['quantidade_planejada'], 0, ',', '.') ?> <span class="text-xs font-medium text-slate-400">un</span></span>
+                        <div class="flex items-center justify-between gap-3 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                            <span class="text-sm font-semibold text-slate-700 min-w-0 truncate"><span class="font-black text-slate-500">[<?= htmlspecialchars($prod['codigo']) ?>]</span> <?= htmlspecialchars($prod['descricao']) ?></span>
+                            <span class="text-base font-black text-slate-900 shrink-0"><?= number_format($prod['quantidade_planejada'], 0, ',', '.') ?> <span class="text-xs font-bold text-slate-400">un</span></span>
                         </div>
                     <?php endforeach; ?>
                 </div>
@@ -201,14 +194,14 @@ if (!function_exists('render_op_card')) {
             <?php if ($mostra_acoes): ?>
                 <div class="shrink-0 flex flex-col gap-2" draggable="false">
                     <?php if ($contexto === 'pcp'): ?>
-                        <button type="button" onclick="document.getElementById('modal_editar_op_<?= $op['id'] ?>').showModal()" title="Editar" class="w-9 h-9 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-blue-600 hover:border-blue-300 transition-colors flex items-center justify-center">
+                        <button type="button" onclick="document.getElementById('modal_editar_op_<?= $op['id'] ?>').showModal()" title="Editar" class="w-9 h-9 rounded-lg border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-300 flex items-center justify-center">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                         </button>
-                        <button type="button" onclick="document.getElementById('modal_cancelar_op_<?= $op['id'] ?>').showModal()" title="Cancelar" class="w-9 h-9 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-rose-600 hover:border-rose-300 transition-colors flex items-center justify-center">
+                        <button type="button" onclick="document.getElementById('modal_cancelar_op_<?= $op['id'] ?>').showModal()" title="Cancelar" class="w-9 h-9 rounded-lg border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-300 flex items-center justify-center">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                         </button>
                     <?php else: ?>
-                        <button type="button" onclick="document.getElementById('modal_op_<?= $modal_prefix . $op['id'] ?>').showModal()" title="<?= htmlspecialchars($botao_texto) ?>" class="bg-slate-800 hover:bg-slate-900 transition-colors text-white font-semibold py-2 px-3 rounded-lg text-xs uppercase tracking-wide flex items-center gap-1.5 shadow-sm">
+                        <button type="button" onclick="document.getElementById('modal_op_<?= $modal_prefix . $op['id'] ?>').showModal()" title="<?= htmlspecialchars($botao_texto) ?>" class="bg-slate-800 hover:bg-black text-white font-black py-2 px-4 rounded-lg text-xs uppercase tracking-wide flex items-center gap-1.5">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
                             <?= htmlspecialchars($botao_texto) ?>
                         </button>
