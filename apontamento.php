@@ -320,7 +320,7 @@ try {
                     <?php else: ?>
                         <button onclick="abrirModalFinalizar()" class="w-full bg-slate-900 hover:bg-black text-white font-black text-xl py-5 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-3">
                             <svg class="w-8 h-8 text-rose-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
-                            FINALIZAR TURNO
+                            FINALIZAR PRODUÇÃO
                         </button>
                     <?php endif; ?>
                 </div>
