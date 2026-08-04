@@ -43,7 +43,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
         // Preparação das Queries de inserção
         $stmt_busca_prod  = $pdo->prepare("SELECT id FROM produtos WHERE codigo = ? LIMIT 1");
         $stmt_busca_linha = $pdo->prepare("SELECT id FROM linhas WHERE login = ? LIMIT 1");
-        $stmt_insere_op   = $pdo->prepare("INSERT INTO ordens_producao (op_sistema, linha_id, criador_id, data_planejada, status, observacao_almoxarifado) VALUES (?, ?, ?, ?, 'PROGRAMADO', ?)");
+        $stmt_max_ordem   = $pdo->prepare("SELECT COALESCE(MAX(ordem_fila), 0) FROM ordens_producao WHERE linha_id = ?");
+        $stmt_insere_op   = $pdo->prepare("INSERT INTO ordens_producao (op_sistema, linha_id, criador_id, data_planejada, status, observacao_almoxarifado, ordem_fila) VALUES (?, ?, ?, ?, 'PROGRAMADO', ?, ?)");
         $stmt_insere_pa   = $pdo->prepare("INSERT INTO op_produtos (op_id, produto_id, quantidade_planejada) VALUES (?, ?, ?)");
 
         // Percorre aba por aba do arquivo
@@ -71,6 +72,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
 
             // Remove o cabeçalho (Primeira linha)
             array_shift($linhasExcel);
+
+            // Prioridade da esteira: a esteira já usa "ordem_fila ASC" pra
+            // decidir quem vem primeiro (1 = maior prioridade). Sem
+            // preencher esse campo aqui, toda OP importada nascia com
+            // ordem_fila NULL -- e NULL sempre ordena ANTES de qualquer
+            // número no MySQL/PHP, então toda importação furava a fila na
+            // frente de tudo que já estava priorizado manualmente.
+            // Começa do que já existe pra essa linha (novas OPs entram
+            // no FIM da fila atual, não pulam pra frente) e vai
+            // incrementando na mesma ordem das linhas da planilha --
+            // a primeira linha da aba vira a de maior prioridade entre as
+            // importadas, a última vira a de menor.
+            $stmt_max_ordem->execute([$linha_id]);
+            $proxima_ordem_fila = (int)$stmt_max_ordem->fetchColumn() + 1;
 
             $numero_linha_arquivo = 1;
 
@@ -124,9 +139,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
                             $ops_ja_existentes[] = $op_sistema;
                         }
                     } else {
-                        $stmt_insere_op->execute([$op_sistema, $linha_id, $criador_id, $data_planejada, $observacao]);
+                        $stmt_insere_op->execute([$op_sistema, $linha_id, $criador_id, $data_planejada, $observacao, $proxima_ordem_fila]);
                         $op_id = $pdo->lastInsertId();
                         $ops_inseridas++;
+                        $proxima_ordem_fila++;
                     }
 
                     // Guarda no cache tanto o id quanto se já existia, pra próximas linhas da mesma OP no arquivo
