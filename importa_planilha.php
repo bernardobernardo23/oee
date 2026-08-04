@@ -36,7 +36,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
         $pdo->beginTransaction();
 
         $ops_criadas_no_lote = [];  // Cache local: op_sistema (do arquivo) => op_id, evita reconsultar o banco a cada linha
-        $proxima_ordem_por_linha = [];
         $ops_ja_existentes   = [];  // op_sistema que já existiam no banco ANTES desta importação (duplicatas)
         $criador_id = $_SESSION['usuario_id'];
         $ops_inseridas = 0;
@@ -44,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
         // Preparação das Queries de inserção
         $stmt_busca_prod  = $pdo->prepare("SELECT id FROM produtos WHERE codigo = ? LIMIT 1");
         $stmt_busca_linha = $pdo->prepare("SELECT id FROM linhas WHERE login = ? LIMIT 1");
-        $stmt_insere_op   = $pdo->prepare("INSERT INTO ordens_producao (op_sistema, linha_id, criador_id, data_planejada, status, observacao_almoxarifado, ordem_fila) VALUES (?, ?, ?, ?, 'PROGRAMADO', ?,?)");
+        $stmt_insere_op   = $pdo->prepare("INSERT INTO ordens_producao (op_sistema, linha_id, criador_id, data_planejada, status, observacao_almoxarifado) VALUES (?, ?, ?, ?, 'PROGRAMADO', ?)");
         $stmt_insere_pa   = $pdo->prepare("INSERT INTO op_produtos (op_id, produto_id, quantidade_planejada) VALUES (?, ?, ?)");
 
         // Percorre aba por aba do arquivo
@@ -57,15 +56,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
             // Se a aba for genérica (ex: "Instruções", "Planilha1"), o sistema ignora e passa para a próxima
             if (!$linha_id) continue;
 
-            // Calcula a próxima posição livre na fila desta linha, e vai
-            // incrementando conforme insere OPs novas nesta mesma aba.
-            if (!isset($proxima_ordem_por_linha[$linha_id])) {
-                $stmt_prox = $pdo->prepare("SELECT COALESCE(MAX(ordem_fila), 0) FROM ordens_producao WHERE linha_id = ?");
-                $stmt_prox->execute([$linha_id]);
-                $proxima_ordem_por_linha[$linha_id] = (int)$stmt_prox->fetchColumn();
-            }
             $sheet = $spreadsheet->getSheetByName($nomeAba);
-            $linhasExcel = $sheet->toArray();
+            // formatData=false é o que importa aqui: sem isso, células de
+            // data verdadeiras (formatadas como data no Excel) voltam como
+            // TEXTO já formatado conforme a config regional de quem editou
+            // a planilha -- se for mm/dd/yyyy (padrão americano), a gente
+            // recebe "08/04/2026" pra uma data que é 4 de agosto, e nosso
+            // parser d/m/Y (corretamente brasileiro) lê isso invertido.
+            // Com formatData=false, recebemos sempre o número de série do
+            // Excel (uma contagem de dias, sem formato/idioma nenhum) pra
+            // qualquer célula que seja uma data de verdade -- 100% imune
+            // a esse tipo de ambiguidade regional.
+            $linhasExcel = $sheet->toArray(null, true, false, false);
 
             // Remove o cabeçalho (Primeira linha)
             array_shift($linhasExcel);
@@ -122,8 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
                             $ops_ja_existentes[] = $op_sistema;
                         }
                     } else {
-                        $proxima_ordem_por_linha[$linha_id]++;
-                        $stmt_insere_op->execute([$op_sistema, $linha_id, $criador_id, $data_planejada, $observacao, $proxima_ordem_por_linha[$linha_id]]);
+                        $stmt_insere_op->execute([$op_sistema, $linha_id, $criador_id, $data_planejada, $observacao]);
                         $op_id = $pdo->lastInsertId();
                         $ops_inseridas++;
                     }
@@ -169,3 +170,4 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo_excel'])) {
         exit;
     }
 }
+?>
