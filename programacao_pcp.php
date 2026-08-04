@@ -282,7 +282,8 @@ try {
                u.nome_completo AS nome_criador, us.nome_completo AS nome_separador, uf.nome_completo AS nome_formulador,
                (SELECT GROUP_CONCAT(CONCAT(p.codigo, ' ', p.descricao) SEPARATOR ' | ') FROM op_produtos op_prod JOIN produtos p ON op_prod.produto_id = p.id WHERE op_prod.op_id = op.id) AS busca_produtos,
                sa.status AS pendencia_almox_status, sa.observacao AS pendencia_almox_obs, sa.created_at AS pendencia_almox_data,
-               sf.status AS pendencia_form_status, sf.motivo_pendencia AS pendencia_form_motivo, sf.observacao AS pendencia_form_obs, sf.created_at AS pendencia_form_data
+               sf.status AS pendencia_form_status, sf.motivo_pendencia AS pendencia_form_motivo, sf.observacao AS pendencia_form_obs, sf.created_at AS pendencia_form_data,
+               interr.motivo_interrupcao AS motivo_interrupcao_recente
         FROM ordens_producao op
         LEFT JOIN linhas l ON op.linha_id = l.id
         LEFT JOIN usuarios u ON op.criador_id = u.id
@@ -300,6 +301,15 @@ try {
             INNER JOIN (SELECT op_id, MAX(id) AS max_id FROM formulacoes GROUP BY op_id) latest
                 ON sf1.id = latest.max_id
         ) sf ON sf.op_id = op.id
+        LEFT JOIN (
+            SELECT a1.ordem_producao, a1.motivo_interrupcao
+            FROM apontamentos a1
+            INNER JOIN (
+                SELECT ordem_producao, MAX(id) AS max_id FROM apontamentos
+                WHERE situacao = 'INTERROMPIDO' AND motivo_interrupcao IS NOT NULL
+                GROUP BY ordem_producao
+            ) latest_interr ON a1.id = latest_interr.max_id
+        ) interr ON interr.ordem_producao = op.op_sistema
         ORDER BY op.data_planejada DESC, op.id DESC
     ");
     $todas_ops = $stmt_fila->fetchAll(PDO::FETCH_ASSOC);
@@ -311,6 +321,31 @@ try {
         $op['produtos'] = $stmt_prods->fetchAll(PDO::FETCH_ASSOC);
     }
     unset($op);
+
+    // Contadores pros botões de "Situação Especial" -- mesma regra
+    // corrigida do card: só conta como "retomada" quem tem produção
+    // parcial de verdade (0 < apontado < planejado) e ainda não
+    // terminou -- uma OP já finalizada não entra aqui, mesmo tendo
+    // quantidade_apontada > 0 (ela SEMPRE vai ter, é assim que ela
+    // termina).
+    $count_retomadas = 0;
+    $count_interrompidas = 0;
+    foreach ($todas_ops as $op_c) {
+        $st_norm_c = normalizaStatus($op_c['status']);
+        $tem_apontado = false;
+        if (!in_array($st_norm_c, ['PRODUCAO FINALIZADA', 'CANCELADO'], true)) {
+            foreach ($op_c['produtos'] as $p_c) {
+                $apontado_c = (int)($p_c['quantidade_apontada'] ?? 0);
+                $planejado_c = (int)($p_c['quantidade_planejada'] ?? 0);
+                if ($apontado_c > 0 && $apontado_c < $planejado_c) {
+                    $tem_apontado = true;
+                    break;
+                }
+            }
+        }
+        if ($tem_apontado) $count_retomadas++;
+        if (!empty($op_c['motivo_interrupcao_recente'])) $count_interrompidas++;
+    }
 
     // Separa os dados para a Esteira (fila ainda dentro do duplo gate)
     $ops_esteira = [];
@@ -350,8 +385,6 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Módulo PCP - Inteligência MES</title>
-    <link rel="icon" type="image/png" href="logo.png">
-
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>tailwind.config = { theme: { extend: { fontFamily: { sans: ['Montserrat', 'sans-serif'] } } } }</script>
@@ -575,36 +608,96 @@ try {
             </div>
 
             <div id="view_global" class="bg-white rounded-xl shadow-sm border border-slate-200/60 p-5 hidden">
-                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
-                        <input type="text" id="filtro_op" onkeyup="aplicarFiltrosGlobal()" placeholder="Buscar por OP..." class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100">
-                        <input type="text" id="filtro_produto" onkeyup="aplicarFiltrosGlobal()" placeholder="Buscar por Produto..." class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100">
+
+                <!-- FILTROS ORGANIZADOS EM SEÇÕES -->
+                <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-5 space-y-4">
+
+                    <!-- Busca textual -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <input type="text" id="filtro_op" onkeyup="aplicarFiltrosGlobal()" placeholder="Buscar por OP..." class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100 bg-white">
+                        <input type="text" id="filtro_produto" onkeyup="aplicarFiltrosGlobal()" placeholder="Buscar por Produto..." class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100 bg-white">
                     </div>
-                    <div class="flex gap-2 shrink-0">
-                        <button type="button" onclick="exportarFiltro('pdf')" title="Exportar PDF com os filtros atuais" class="flex items-center gap-1.5 bg-white border border-slate-300 hover:border-rose-400 hover:text-rose-600 text-slate-600 font-bold text-xs px-3 py-2 rounded-lg transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                            PDF
-                        </button>
-                        <button type="button" onclick="exportarFiltro('xlsx')" title="Exportar planilha com os filtros atuais" class="flex items-center gap-1.5 bg-white border border-slate-300 hover:border-emerald-400 hover:text-emerald-600 text-slate-600 font-bold text-xs px-3 py-2 rounded-lg transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-                            Planilha
-                        </button>
+
+                    <!-- Fábrica / Linha / Período -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Fábrica</label>
+                            <select id="filtro_fabrica" onchange="atualizarLinhasDoFiltro(); aplicarFiltrosGlobal()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                                <option value="">Todas</option>
+                                <?php foreach ($fabricas as $fab): ?>
+                                    <option value="<?= $fab ?>">Fábrica <?= $fab ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Linha</label>
+                            <select id="filtro_linha" onchange="aplicarFiltrosGlobal()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                                <option value="">Todas</option>
+                                <?php foreach ($linhas_dropdown as $l): ?>
+                                    <option value="<?= $l['id'] ?>" data-fabrica="<?= $l['fabrica'] ?>"><?= htmlspecialchars(strtoupper($l['login'])) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Data de</label>
+                            <input type="date" id="filtro_data_de" onchange="aplicarFiltrosGlobal()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Data até</label>
+                            <input type="date" id="filtro_data_ate" onchange="aplicarFiltrosGlobal()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                        </div>
                     </div>
-                </div>
-                <div class="flex flex-wrap gap-3 mb-6">
-                    <?php foreach ($status_meta as $nome => $meta): $cor = $meta['cor']; ?>
-                        <button type="button" onclick="toggleStatusGlobal('<?= $nome ?>', this)" data-color="<?= $cor ?>" data-shade="500" class="btn-status-global group px-4 py-2.5 rounded-lg text-sm font-bold transition-all duration-200 bg-<?= $cor ?>-100 text-<?= $cor ?>-900 hover:bg-<?= $cor ?>-500 hover:text-white shadow-sm flex items-center gap-2">
-                            <span class="dot-status w-3 h-3 rounded-full bg-<?= $cor ?>-500 group-hover:bg-white shrink-0 transition-colors"></span> <?= $meta['label'] ?> (<?= $count_status[$nome] ?? 0 ?>)
+
+                    <!-- Situação especial (o que motivou esse pedido: OPs paradas entre dias) -->
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Situação Especial</label>
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" onclick="toggleSituacaoEspecial('retomada', this)" data-filtro="retomada" class="btn-situacao-especial px-3.5 py-2 rounded-lg text-xs font-bold uppercase tracking-wide border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-500 hover:text-white transition-colors flex items-center gap-1.5">
+                                Retomadas (<?= $count_retomadas ?? 0 ?>)
+                            </button>
+                            <button type="button" onclick="toggleSituacaoEspecial('interrompida', this)" data-filtro="interrompida" class="btn-situacao-especial px-3.5 py-2 rounded-lg text-xs font-bold uppercase tracking-wide border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-500 hover:text-white transition-colors flex items-center gap-1.5">
+                                Com Interrupção (<?= $count_interrompidas ?? 0 ?>)
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Status -->
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Status</label>
+                        <div class="flex flex-wrap gap-2">
+                            <?php foreach ($status_meta as $nome => $meta): $cor = $meta['cor']; ?>
+                                <button type="button" onclick="toggleStatusGlobal('<?= $nome ?>', this)" data-color="<?= $cor ?>" data-shade="500" class="btn-status-global group px-3.5 py-2 rounded-lg text-xs font-bold transition-all duration-200 bg-<?= $cor ?>-100 text-<?= $cor ?>-900 hover:bg-<?= $cor ?>-500 hover:text-white shadow-sm flex items-center gap-1.5">
+                                    <span class="dot-status w-2.5 h-2.5 rounded-full bg-<?= $cor ?>-500 group-hover:bg-white shrink-0 transition-colors"></span> <?= $meta['label'] ?> (<?= $count_status[$nome] ?? 0 ?>)
+                                </button>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+
+                    <!-- Ações: limpar + exportar -->
+                    <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200">
+                        <button type="button" onclick="limparFiltrosGlobal()" class="text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            Limpar todos os filtros
                         </button>
-                    <?php endforeach; ?>
+                        <div class="flex gap-2 shrink-0">
+                            <button type="button" onclick="exportarFiltro('pdf')" title="Exportar PDF com os filtros atuais" class="flex items-center gap-1.5 bg-white border border-slate-300 hover:border-rose-400 hover:text-rose-600 text-slate-600 font-bold text-xs px-3 py-2 rounded-lg transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                PDF
+                            </button>
+                            <button type="button" onclick="exportarFiltro('xlsx')" title="Exportar planilha com os filtros atuais" class="flex items-center gap-1.5 bg-white border border-slate-300 hover:border-emerald-400 hover:text-emerald-600 text-slate-600 font-bold text-xs px-3 py-2 rounded-lg transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                                Planilha
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="space-y-3">
+                <div id="grid_cards_global" class="grid grid-cols-1 xl:grid-cols-2 gap-4">
                     <?php foreach ($todas_ops as $idx => $op): ?>
                         <?php render_op_card($op, $idx, $status_meta, $motivos_pendencia_labels, false, false, true); ?>
                     <?php endforeach; ?>
-                    <div id="msg_vazio_global" class="hidden p-6 text-center text-sm text-slate-400 font-semibold border-2 border-dashed border-slate-200 rounded-xl">Nenhuma OP corresponde aos filtros de busca.</div>
                 </div>
+                <div id="msg_vazio_global" class="hidden p-6 text-center text-sm text-slate-400 font-semibold border-2 border-dashed border-slate-200 rounded-xl">Nenhuma OP corresponde aos filtros de busca.</div>
             </div>
         </div>
 
@@ -633,7 +726,7 @@ try {
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-600 mb-1.5">Observação</label>
-                        <input type="text" name="observacao" value="<?= htmlspecialchars($f['observacao_almoxarifado']) ?>" class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm">
+                        <input type="text" name="observacao" value="<?= htmlspecialchars($f['observacao_almoxarifado'] ?? '') ?>" class="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm">
                     </div>
                     
                     <div class="pt-2 border-t border-slate-100">
@@ -1008,6 +1101,7 @@ try {
         // FILTROS VISÃO GLOBAL
         // ----------------------------------------------------
         let statusGlobais = [];
+        let situacoesEspeciaisAtivas = [];
         function toggleStatusGlobal(status, btnElement) {
             const idx = statusGlobais.indexOf(status);
             const cor = btnElement.dataset.color || 'slate';
@@ -1031,20 +1125,76 @@ try {
         function aplicarFiltrosGlobal() {
             const tOp = document.getElementById('filtro_op').value.toLowerCase();
             const tProd = document.getElementById('filtro_produto').value.toLowerCase();
+            const fFabrica = document.getElementById('filtro_fabrica').value;
+            const fLinha = document.getElementById('filtro_linha').value;
+            const fDataDe = document.getElementById('filtro_data_de').value;
+            const fDataAte = document.getElementById('filtro_data_ate').value;
             let visiveis = 0;
 
             document.querySelectorAll('.card-global').forEach(c => {
                 const matchOp = c.dataset.op.includes(tOp);
                 const matchProd = c.dataset.prod.includes(tProd);
                 const matchStatus = statusGlobais.length === 0 || statusGlobais.includes(c.dataset.status);
+                const matchFabrica = fFabrica === '' || c.dataset.fabrica === fFabrica;
+                const matchLinha = fLinha === '' || c.dataset.linhaId === fLinha;
+                const matchDataDe = fDataDe === '' || c.dataset.data >= fDataDe;
+                const matchDataAte = fDataAte === '' || c.dataset.data <= fDataAte;
+                const matchRetomada = !situacoesEspeciaisAtivas.includes('retomada') || c.dataset.retomada === '1';
+                const matchInterrompida = !situacoesEspeciaisAtivas.includes('interrompida') || c.dataset.interrompida === '1';
 
-                if (matchOp && matchProd && matchStatus) {
+                if (matchOp && matchProd && matchStatus && matchFabrica && matchLinha && matchDataDe && matchDataAte && matchRetomada && matchInterrompida) {
                     c.style.display = ''; visiveis++;
                 } else {
                     c.style.display = 'none';
                 }
             });
             document.getElementById('msg_vazio_global').classList.toggle('hidden', visiveis > 0);
+        }
+
+        function atualizarLinhasDoFiltro() {
+            const fabricaEscolhida = document.getElementById('filtro_fabrica').value;
+            const selectLinha = document.getElementById('filtro_linha');
+            selectLinha.value = ''; // reseta a linha ao trocar de fábrica, evita combinação impossível
+            selectLinha.querySelectorAll('option[data-fabrica]').forEach(opt => {
+                opt.classList.toggle('hidden', fabricaEscolhida !== '' && opt.dataset.fabrica !== fabricaEscolhida);
+            });
+        }
+
+        function toggleSituacaoEspecial(tipo, btnElement) {
+            const idx = situacoesEspeciaisAtivas.indexOf(tipo);
+            if (idx > -1) {
+                situacoesEspeciaisAtivas.splice(idx, 1);
+                btnElement.classList.remove('ring-2', 'ring-offset-1');
+            } else {
+                situacoesEspeciaisAtivas.push(tipo);
+                btnElement.classList.add('ring-2', 'ring-offset-1', tipo === 'retomada' ? 'ring-amber-400' : 'ring-orange-400');
+            }
+            aplicarFiltrosGlobal();
+        }
+
+        function limparFiltrosGlobal() {
+            document.getElementById('filtro_op').value = '';
+            document.getElementById('filtro_produto').value = '';
+            document.getElementById('filtro_fabrica').value = '';
+            document.getElementById('filtro_linha').value = '';
+            document.getElementById('filtro_data_de').value = '';
+            document.getElementById('filtro_data_ate').value = '';
+            atualizarLinhasDoFiltro();
+
+            statusGlobais = [];
+            document.querySelectorAll('.btn-status-global').forEach(btn => {
+                const cor = btn.dataset.color, tom = btn.dataset.shade;
+                btn.classList.remove('text-white', `bg-${cor}-${tom}`, 'shadow-lg');
+                const dot = btn.querySelector('.dot-status');
+                if (dot) dot.classList.remove('bg-white');
+            });
+
+            situacoesEspeciaisAtivas = [];
+            document.querySelectorAll('.btn-situacao-especial').forEach(btn => {
+                btn.classList.remove('ring-2', 'ring-offset-1', 'ring-amber-400', 'ring-orange-400');
+            });
+
+            aplicarFiltrosGlobal();
         }
 
         // ----------------------------------------------------
@@ -1055,9 +1205,18 @@ try {
             params.set('formato', formato);
             const tOp = document.getElementById('filtro_op').value.trim();
             const tProd = document.getElementById('filtro_produto').value.trim();
+            const fFabrica = document.getElementById('filtro_fabrica').value;
+            const fLinha = document.getElementById('filtro_linha').value;
+            const fDataDe = document.getElementById('filtro_data_de').value;
+            const fDataAte = document.getElementById('filtro_data_ate').value;
             if (tOp) params.set('op', tOp);
             if (tProd) params.set('produto', tProd);
+            if (fFabrica) params.set('fabrica', fFabrica);
+            if (fLinha) params.set('linha_id', fLinha);
+            if (fDataDe) params.set('data_de', fDataDe);
+            if (fDataAte) params.set('data_ate', fDataAte);
             statusGlobais.forEach(s => params.append('status[]', s));
+            situacoesEspeciaisAtivas.forEach(s => params.append('situacao[]', s));
             window.location.href = 'exportar_pcp.php?' + params.toString();
         }
     </script>

@@ -208,6 +208,8 @@ if ($sino_com_abas) {
         'OP_PRODUCAO_INICIADA': '▶️',
         'OP_PAUSADA': '⏸️',
         'OP_RETOMADA': '🔁',
+        'OP_PRODUCAO_PARCIAL': '📊',
+        'OP_INTERROMPIDA': '⛔',
         'OP_PRODUZIDA': '🏁',
     };
 

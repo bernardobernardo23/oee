@@ -19,6 +19,15 @@ function normalizaStatusExport($str) {
     return str_replace(['Ç', 'Ã', 'Á', 'À', 'É', 'Í', 'Ó', 'Ú', 'Â', 'Ê'], ['C', 'A', 'A', 'A', 'E', 'I', 'O', 'U', 'A', 'E'], $str);
 }
 
+function situacaoEspecialTexto(array $op): string {
+    $partes = [];
+    $st_norm = normalizaStatusExport($op['status']);
+    $ja_terminou = in_array($st_norm, ['PRODUCAO FINALIZADA', 'CANCELADO'], true);
+    if (!$ja_terminou && (int)($op['qtd_produtos_parcial'] ?? 0) > 0) $partes[] = 'Retomada';
+    if (!empty($op['motivo_interrupcao_recente'])) $partes[] = 'Interrompida';
+    return empty($partes) ? '-' : implode(' + ', $partes);
+}
+
 $status_meta = [
     'PROGRAMADO'              => 'Programado',
     'AGUARDANDO FORMULACAO'   => 'Aguard. Formulação',
@@ -40,17 +49,34 @@ $termo_op = trim($_GET['op'] ?? '');
 $termo_produto = trim($_GET['produto'] ?? '');
 $status_filtrados = $_GET['status'] ?? [];
 $status_filtrados = is_array($status_filtrados) ? array_intersect($status_filtrados, array_keys($status_meta)) : [];
+$fabrica_filtro = trim($_GET['fabrica'] ?? '');
+$linha_id_filtro = trim($_GET['linha_id'] ?? '');
+$data_de_filtro = trim($_GET['data_de'] ?? '');
+$data_ate_filtro = trim($_GET['data_ate'] ?? '');
+$situacao_filtrada = $_GET['situacao'] ?? [];
+$situacao_filtrada = is_array($situacao_filtrada) ? array_intersect($situacao_filtrada, ['retomada', 'interrompida']) : [];
 
 try {
     $sql = "
-        SELECT op.id, op.op_sistema, op.data_planejada, op.status,
+        SELECT op.id, op.op_sistema, op.data_planejada, op.status, op.linha_id,
                l.login AS linha_nome, l.fabrica,
                (SELECT GROUP_CONCAT(CONCAT(p.codigo, ' - ', p.descricao, ' (', op_p.quantidade_planejada, ' un)') SEPARATOR '; ')
                     FROM op_produtos op_p JOIN produtos p ON op_p.produto_id = p.id WHERE op_p.op_id = op.id) AS produtos_resumo,
                (SELECT GROUP_CONCAT(CONCAT(p.codigo, ' ', p.descricao) SEPARATOR ' | ')
-                    FROM op_produtos op_p JOIN produtos p ON op_p.produto_id = p.id WHERE op_p.op_id = op.id) AS busca_produtos
+                    FROM op_produtos op_p JOIN produtos p ON op_p.produto_id = p.id WHERE op_p.op_id = op.id) AS busca_produtos,
+               (SELECT COUNT(*) FROM op_produtos op_p WHERE op_p.op_id = op.id AND op_p.quantidade_apontada > 0 AND op_p.quantidade_apontada < op_p.quantidade_planejada) AS qtd_produtos_parcial,
+               interr.motivo_interrupcao AS motivo_interrupcao_recente
         FROM ordens_producao op
         LEFT JOIN linhas l ON op.linha_id = l.id
+        LEFT JOIN (
+            SELECT a1.ordem_producao, a1.motivo_interrupcao
+            FROM apontamentos a1
+            INNER JOIN (
+                SELECT ordem_producao, MAX(id) AS max_id FROM apontamentos
+                WHERE situacao = 'INTERROMPIDO' AND motivo_interrupcao IS NOT NULL
+                GROUP BY ordem_producao
+            ) latest_interr ON a1.id = latest_interr.max_id
+        ) interr ON interr.ordem_producao = op.op_sistema
         WHERE 1=1
     ";
     $params = [];
@@ -59,20 +85,39 @@ try {
         $sql .= " AND op.op_sistema LIKE ?";
         $params[] = '%' . $termo_op . '%';
     }
+    if ($fabrica_filtro !== '') {
+        $sql .= " AND l.fabrica = ?";
+        $params[] = $fabrica_filtro;
+    }
+    if ($linha_id_filtro !== '') {
+        $sql .= " AND op.linha_id = ?";
+        $params[] = $linha_id_filtro;
+    }
+    if ($data_de_filtro !== '') {
+        $sql .= " AND op.data_planejada >= ?";
+        $params[] = $data_de_filtro;
+    }
+    if ($data_ate_filtro !== '') {
+        $sql .= " AND op.data_planejada <= ?";
+        $params[] = $data_ate_filtro;
+    }
 
     $stmt = $pdo->prepare($sql . " ORDER BY op.data_planejada DESC, op.id DESC");
     $stmt->execute($params);
     $linhas_ops = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Filtros que dependem de valor calculado (status normalizado, busca
-    // por produto) são aplicados em PHP -- mais simples que replicar a
-    // lógica de normalização inteira em SQL.
-    if ($termo_produto !== '' || !empty($status_filtrados)) {
+    // por produto, situação especial) são aplicados em PHP -- mais simples
+    // que replicar a lógica de normalização inteira em SQL.
+    if ($termo_produto !== '' || !empty($status_filtrados) || !empty($situacao_filtrada)) {
         $termo_produto_lower = mb_strtolower($termo_produto);
-        $linhas_ops = array_values(array_filter($linhas_ops, function ($op) use ($termo_produto_lower, $status_filtrados) {
+        $linhas_ops = array_values(array_filter($linhas_ops, function ($op) use ($termo_produto_lower, $status_filtrados, $situacao_filtrada) {
             $st_norm = normalizaStatusExport($op['status']);
             if (!empty($status_filtrados) && !in_array($st_norm, $status_filtrados, true)) return false;
             if ($termo_produto_lower !== '' && mb_strpos(mb_strtolower($op['busca_produtos'] ?? ''), $termo_produto_lower) === false) return false;
+            $ja_terminou = in_array($st_norm, ['PRODUCAO FINALIZADA', 'CANCELADO'], true);
+            if (in_array('retomada', $situacao_filtrada, true) && ($ja_terminou || (int)$op['qtd_produtos_parcial'] === 0)) return false;
+            if (in_array('interrompida', $situacao_filtrada, true) && empty($op['motivo_interrupcao_recente'])) return false;
             return true;
         }));
     }
@@ -90,12 +135,12 @@ if ($formato === 'xlsx') {
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Programação PCP');
 
-    $cabecalho = ['OP', 'Fábrica', 'Linha', 'Data Planejada', 'Status', 'Produtos'];
+    $cabecalho = ['OP', 'Fábrica', 'Linha', 'Data Planejada', 'Status', 'Situação', 'Produtos'];
     $sheet->fromArray($cabecalho, null, 'A1');
 
-    $sheet->getStyle('A1:F1')->getFont()->setBold(true)->getColor()->setRGB('FFFFFF');
-    $sheet->getStyle('A1:F1')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('1E293B');
-    $sheet->getStyle('A1:F1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    $sheet->getStyle('A1:G1')->getFont()->setBold(true)->getColor()->setRGB('FFFFFF');
+    $sheet->getStyle('A1:G1')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('1E293B');
+    $sheet->getStyle('A1:G1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
 
     $linha_atual = 2;
     foreach ($linhas_ops as $op) {
@@ -106,16 +151,17 @@ if ($formato === 'xlsx') {
             strtoupper($op['linha_nome'] ?? '-'),
             date('d/m/Y', strtotime($op['data_planejada'])),
             $status_meta[$st_norm] ?? $op['status'],
+            situacaoEspecialTexto($op),
             $op['produtos_resumo'] ?? '',
         ], null, 'A' . $linha_atual);
         $linha_atual++;
     }
 
-    foreach (['A', 'B', 'C', 'D', 'E'] as $col) {
+    foreach (['A', 'B', 'C', 'D', 'E', 'F'] as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
-    $sheet->getColumnDimension('F')->setWidth(60);
-    $sheet->getStyle('F2:F' . ($linha_atual - 1))->getAlignment()->setWrapText(true);
+    $sheet->getColumnDimension('G')->setWidth(60);
+    $sheet->getStyle('G2:G' . ($linha_atual - 1))->getAlignment()->setWrapText(true);
 
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment;filename="' . $nome_arquivo . '.xlsx"');
@@ -125,7 +171,6 @@ if ($formato === 'xlsx') {
     $writer->save('php://output');
     exit;
 }
-
 // ================================================================
 // EXPORTAÇÃO EM PDF
 // ================================================================
@@ -134,9 +179,19 @@ if ($formato === 'pdf') {
     if ($termo_op !== '') $filtros_aplicados[] = "OP contém \"{$termo_op}\"";
     if ($termo_produto !== '') $filtros_aplicados[] = "Produto contém \"{$termo_produto}\"";
     if (!empty($status_filtrados)) $filtros_aplicados[] = "Status: " . implode(', ', array_map(fn($s) => $status_meta[$s] ?? $s, $status_filtrados));
+    if ($fabrica_filtro !== '') $filtros_aplicados[] = "Fábrica {$fabrica_filtro}";
+    if ($linha_id_filtro !== '') {
+        $stmt_nome_linha = $pdo->prepare("SELECT login FROM linhas WHERE id = ?");
+        $stmt_nome_linha->execute([$linha_id_filtro]);
+        $nome_linha_filtro = $stmt_nome_linha->fetchColumn();
+        $filtros_aplicados[] = "Linha " . strtoupper($nome_linha_filtro ?: $linha_id_filtro);
+    }
+    if ($data_de_filtro !== '') $filtros_aplicados[] = "De " . date('d/m/Y', strtotime($data_de_filtro));
+    if ($data_ate_filtro !== '') $filtros_aplicados[] = "Até " . date('d/m/Y', strtotime($data_ate_filtro));
+    if (!empty($situacao_filtrada)) $filtros_aplicados[] = "Situação: " . implode(' + ', array_map(fn($s) => $s === 'retomada' ? 'Retomadas' : 'Com Interrupção', $situacao_filtrada));
     $resumo_filtros = empty($filtros_aplicados) ? 'Sem filtro -- todas as OPs' : implode(' · ', $filtros_aplicados);
 
-    // Converte a logo para Base64 para garantir que o Dompdf a renderize perfeitamente
+    // Converte a logo para Base64 para garantir a renderização no Dompdf
     $caminho_logo = 'logo.png';
     $base64_logo = '';
     if (file_exists($caminho_logo)) {
@@ -145,43 +200,51 @@ if ($formato === 'pdf') {
         $base64_logo = 'data:image/' . $tipo_img . ';base64,' . base64_encode($dados_img);
     }
 
+    // O import da fonte Montserrat no CSS
     $html = '<html><head><meta charset="UTF-8"><style>
-        @page { margin: 110px 30px 60px 30px; }
-        body { font-family: Arial, sans-serif; font-size: 10px; color: #1e293b; }
+        @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap");
         
-        /* Estilos do Novo Cabeçalho Limpo */
-        .cabecalho { position: fixed; top: -90px; left: 0; right: 0; height: 75px; border-bottom: 2px solid #1e293b; padding-bottom: 10px; }
+        @page { margin: 110px 30px 60px 30px; }
+        body { font-family: "Montserrat", Arial, sans-serif; font-size: 10px; color: #1e293b; }
+        
+        /* CABEÇALHO ESTILIZADO */
+        .cabecalho { position: fixed; top: -90px; left: 0; right: 0; height: 75px; border-bottom: 3px solid #42f54b; padding-bottom: 10px; background: #fff; }
         .tabela-cabecalho { width: 100%; border: none; border-collapse: collapse; }
-        .tabela-cabecalho td { border: none; padding: 0; vertical-align: middle; background: transparent; }
-        .logo-img { max-height: 45px; width: auto; }
-        .titulo-relatorio { font-size: 16px; font-weight: bold; color: #1e293b; margin-bottom: 4px; }
+        .tabela-cabecalho td { border: none; padding: 0; vertical-align: middle; }
+        
+        /* Alinhamento da Logo e Texto */
+        .logo-img { max-height: 40px; width: auto; vertical-align: middle; }
+        .marca-texto { font-family: "Montserrat", sans-serif; font-size: 18px; font-weight: 900; color: #1e293b; margin-left: 10px; vertical-align: middle; letter-spacing: 0.5px; }
+        
+        .titulo-relatorio { font-size: 16px; font-weight: bold; color: #1e293b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
         .meta { color: #64748b; font-size: 9px; line-height: 1.4; }
         
         .rodape { position: fixed; bottom: -50px; left: 0; right: 0; text-align: center; color: #94a3b8; font-size: 8px; border-top: 1px solid #e2e8f0; padding-top: 6px; }
         
-        /* Estilos da Tabela de Dados */
-        table.dados { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        table.dados th { background: #1e293b; color: #fff; text-align: left; padding: 8px 8px; font-size: 9px; text-transform: uppercase; }
+        /* TABELA DE DADOS */
+        table.dados { width: 100%; border-collapse: collapse; margin-top: 5px; }
+        table.dados th { background: #1e293b; color: #fff; text-align: left; padding: 8px; font-size: 9px; text-transform: uppercase; }
         table.dados td { padding: 7px 8px; border-bottom: 1px solid #e2e8f0; font-size: 9px; vertical-align: top; }
         table.dados tr:nth-child(even) td { background: #f8fafc; }
     </style></head><body>';
 
-    // Construção do Cabeçalho com a Logo
+    // Injeta a tabela do cabeçalho com a imagem + texto lado a lado
     $html .= '<div class="cabecalho">
         <table class="tabela-cabecalho">
             <tr>
-                <td style="width: 50%; text-align: left;">';
+                <td style="width: 50%; text-align: left; white-space: nowrap;">';
                 if ($base64_logo) {
-                    $html .= '<img src="' . $base64_logo . '" class="logo-img" alt="Chesiquímica">';
+                    $html .= '<img src="' . $base64_logo . '" class="logo-img" alt="Logo">';
+                    $html .= '<span class="marca-texto">CHESIQUÍMICA</span>';
                 } else {
-                    $html .= '<h2 style="margin:0; font-size: 18px; color: #1e293b;">CHESIQUÍMICA</h2>';
+                    $html .= '<span class="marca-texto" style="margin-left: 0;">CHESIQUÍMICA</span>';
                 }
     $html .= '  </td>
                 <td style="width: 50%; text-align: right;">
-                    <div class="titulo-relatorio">Relatório de Programação de OPs</div>
+                    <div class="titulo-relatorio">Programação de OPs</div>
                     <div class="meta">
-                        Gerado em ' . date('d/m/Y \à\s H:i') . ' &nbsp;|&nbsp; ' . count($linhas_ops) . ' OP(s)<br>
-                        Filtro: ' . htmlspecialchars($resumo_filtros) . '
+                        Gerado em ' . date('d/m/Y \à\s H:i') . ' &nbsp;|&nbsp; ' . count($linhas_ops) . ' OP(s) listada(s)<br>
+                        <strong>Filtro:</strong> ' . htmlspecialchars($resumo_filtros) . '
                     </div>
                 </td>
             </tr>
@@ -190,7 +253,7 @@ if ($formato === 'pdf') {
 
     $html .= '<div class="rodape">Chesiquímica &mdash; Documento gerado automaticamente pelo sistema, uso interno.</div>';
 
-    $html .= '<table class="dados"><thead><tr><th style="width:12%">OP</th><th style="width:8%">Fábrica</th><th style="width:10%">Linha</th><th style="width:10%">Data Plan.</th><th style="width:15%">Status</th><th style="width:45%">Produtos</th></tr></thead><tbody>';
+    $html .= '<table class="dados"><thead><tr><th style="width:10%">OP</th><th style="width:8%">Fábrica</th><th style="width:10%">Linha</th><th style="width:9%">Data Plan.</th><th style="width:14%">Status</th><th style="width:12%">Situação</th><th style="width:37%">Produtos</th></tr></thead><tbody>';
 
     foreach ($linhas_ops as $op) {
         $st_norm = normalizaStatusExport($op['status']);
@@ -200,12 +263,17 @@ if ($formato === 'pdf') {
             . '<td>' . htmlspecialchars(strtoupper($op['linha_nome'] ?? '-')) . '</td>'
             . '<td>' . date('d/m/Y', strtotime($op['data_planejada'])) . '</td>'
             . '<td>' . htmlspecialchars($status_meta[$st_norm] ?? $op['status']) . '</td>'
+            . '<td>' . htmlspecialchars(situacaoEspecialTexto($op)) . '</td>'
             . '<td>' . htmlspecialchars($op['produtos_resumo'] ?? '') . '</td>'
             . '</tr>';
     }
     $html .= '</tbody></table></body></html>';
 
-    $dompdf = new Dompdf\Dompdf();
+    // Para a fonte remota (Google Fonts) funcionar no Dompdf, precisamos ativar o isRemoteEnabled
+    $options = new Dompdf\Options();
+    $options->set('isRemoteEnabled', true);
+    
+    $dompdf = new Dompdf\Dompdf($options);
     $dompdf->setPaper('A4', 'landscape');
     $dompdf->loadHtml($html);
     $dompdf->render();
@@ -218,3 +286,7 @@ if ($formato === 'pdf') {
     $dompdf->stream($nome_arquivo . '.pdf', ['Attachment' => true]);
     exit;
 }
+
+// Formato desconhecido
+header("Location: programacao_pcp.php");
+exit;

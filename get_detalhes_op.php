@@ -5,8 +5,12 @@ $op_id = (int)($_GET['op_id'] ?? 0);
 
 if ($op_id > 0) {
     // 1. Busca os Produtos Acabados da OP e a sua respectiva Meta (quantidade_planejada)
+    // Também traz quantidade_apontada -- o que já foi produzido em turnos
+    // anteriores dessa mesma OP (dias passados, inclusive) -- pra calcular
+    // no frontend quanto REALMENTE falta, em vez de comparar contra a
+    // meta original inteira de novo a cada turno.
     $stmt_prod = $pdo->prepare("
-        SELECT op_p.produto_id, op_p.quantidade_planejada, p.codigo, p.descricao 
+        SELECT op_p.produto_id, op_p.quantidade_planejada, op_p.quantidade_apontada, p.codigo, p.descricao 
         FROM op_produtos op_p
         JOIN produtos p ON op_p.produto_id = p.id
         WHERE op_p.op_id = ?

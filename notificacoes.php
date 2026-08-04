@@ -48,7 +48,7 @@ if (!function_exists('tipos_evento_por_categoria')) {
             // plugado (dependem de acao_apontamento.php, que ainda não
             // foi integrado) -- a categoria já existe pronta pra quando
             // isso for ligado.
-            'produzidas' => ['OP_PRODUCAO_INICIADA', 'OP_PAUSADA', 'OP_RETOMADA', 'OP_PRODUZIDA'],
+            'produzidas' => ['OP_PRODUCAO_INICIADA', 'OP_PAUSADA', 'OP_RETOMADA', 'OP_PRODUZIDA', 'OP_PRODUCAO_PARCIAL', 'OP_INTERROMPIDA'],
         ];
     }
 }

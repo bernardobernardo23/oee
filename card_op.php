@@ -127,13 +127,39 @@ if (!function_exists('render_op_card')) {
         $tem_pend_form  = ($op['pendencia_form_status'] ?? null) === 'PENDENCIA';
         $tem_pendencia  = $tem_pend_almox || $tem_pend_form;
         $mostra_acoes = $contexto !== 'pcp' || !in_array($st_norm, ['PRODUCAO FINALIZADA', 'CANCELADO']);
+
+        // Retomada = já tem alguma quantidade apontada de turno(s)
+        // anterior(es), MAS AINDA FALTA produzir (0 < apontado <
+        // planejado) -- uma OP que já bateu 100% ou passou disso não é
+        // "retomada", é só uma OP produzida normalmente. Também nunca
+        // marca se a OP já está FINALIZADA/CANCELADA, mesmo que por
+        // algum motivo a conta de quantidade não bata exatamente
+        // (ex: excedente confirmado no Finalizar).
+        $tem_retomada = false;
+        if (!in_array($st_norm, ['PRODUCAO FINALIZADA', 'CANCELADO'], true)) {
+            foreach (($op['produtos'] ?? []) as $prod_check) {
+                $apontado = (int)($prod_check['quantidade_apontada'] ?? 0);
+                $planejado = (int)($prod_check['quantidade_planejada'] ?? 0);
+                if ($apontado > 0 && $apontado < $planejado) {
+                    $tem_retomada = true;
+                    break;
+                }
+            }
+        }
+        $tem_interrupcao = !empty($op['motivo_interrupcao_recente']);
 ?>
-    <div class="op-card group <?= $show_linha_badge ? 'card-global' : '' ?> bg-white border <?= $tem_pendencia ? 'border-rose-300' : 'border-slate-200' ?> rounded-xl p-4 shadow-sm hover:border-blue-300 transition-colors"
+    <div class="op-card group <?= $show_linha_badge ? 'card-global' : '' ?> bg-white border <?= $tem_pendencia ? 'border-rose-300' : ($tem_interrupcao ? 'border-amber-300' : 'border-slate-200') ?> rounded-xl p-4 shadow-sm hover:border-blue-300 transition-colors"
         draggable="<?= $draggable ? 'true' : 'false' ?>"
         data-op-id="<?= $op['id'] ?>"
         data-op="<?= strtolower(htmlspecialchars($op['op_sistema'])) ?>"
         data-prod="<?= strtolower(htmlspecialchars($op['busca_produtos'] ?? '')) ?>"
-        data-status="<?= htmlspecialchars($op['status']) ?>">
+        data-status="<?= htmlspecialchars($op['status']) ?>"
+        data-linha-id="<?= (int)($op['linha_id'] ?? 0) ?>"
+        data-fabrica="<?= (int)($op['fabrica'] ?? 0) ?>"
+        data-data="<?= htmlspecialchars($op['data_planejada'] ?? '') ?>"
+        data-retomada="<?= $tem_retomada ? '1' : '0' ?>"
+        data-interrompida="<?= $tem_interrupcao ? '1' : '0' ?>">
+
 
         <div class="flex items-start gap-3">
             <!-- posição / ícone neutro -->
@@ -149,13 +175,16 @@ if (!function_exists('render_op_card')) {
                 <!-- OP e data em destaque -->
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-2xl font-black text-slate-900 tracking-tight"><?= htmlspecialchars($op['op_sistema']) ?></span>
+                        <span class="text-2xl font-black text-slate-900 tracking-tight">OP <?= htmlspecialchars($op['op_sistema']) ?></span>
                         <span class="bg-<?= $cor_st ?>-100 text-<?= $cor_st ?>-800 text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded"><?= $label_st ?></span>
+                        <?php if ($tem_retomada): ?>
+                            <span class="bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded border border-amber-200" title="Já tem produção de turno(s) anterior(es)">↻ Retomada</span>
+                        <?php endif; ?>
                         <?php if ($show_linha_badge): ?>
                             <span class="bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded border border-slate-200">Fáb <?= $op['fabrica'] ?> · <?= htmlspecialchars($op['linha_nome']) ?></span>
                         <?php endif; ?>
                     </div>
-                    <span class="text-sm font-black text-slate-700 shrink-0">📅 <?= date('d/m/Y', strtotime($op['data_planejada'])) ?></span>
+                    <span class="text-sm font-black text-slate-700 shrink-0"><?= date('d/m/Y', strtotime($op['data_planejada'])) ?></span>
                 </div>
 
                 <!-- selos de progresso -->
@@ -167,12 +196,18 @@ if (!function_exists('render_op_card')) {
 
                 <?php if ($tem_pend_almox): ?>
                     <div class="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-2">
-                        <p class="text-xs text-rose-700"><span class="font-black uppercase tracking-wide">Pendência Almoxarifado:</span> Estoque insuficiente<?= !empty($op['pendencia_almox_obs']) ? ' — ' . htmlspecialchars($op['pendencia_almox_obs']) : '' ?></p>
+                        <p class="text-xs text-rose-700"><span class="font-black uppercase tracking-wide">Pendência Almoxarifado:</span><?= !empty($op['pendencia_almox_obs']) ? ' ' . htmlspecialchars($op['pendencia_almox_obs']) : ' Pendência registrada' ?></p>
                     </div>
                 <?php endif; ?>
                 <?php if ($tem_pend_form): ?>
                     <div class="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-2">
                         <p class="text-xs text-rose-700"><span class="font-black uppercase tracking-wide">Pendência Formulação:</span><?= !empty($op['pendencia_form_obs']) ? ' ' . htmlspecialchars($op['pendencia_form_obs']) : ' Pendência registrada' ?></p>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($tem_interrupcao): ?>
+                    <div class="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                        <p class="text-xs text-amber-800"><span class="font-black uppercase tracking-wide">Trocada/Interrompida antes:</span> <?= htmlspecialchars($op['motivo_interrupcao_recente']) ?></p>
                     </div>
                 <?php endif; ?>
 
@@ -185,7 +220,13 @@ if (!function_exists('render_op_card')) {
                     <?php foreach ($op['produtos'] as $prod): ?>
                         <div class="flex items-center justify-between gap-3 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
                             <span class="text-sm font-semibold text-slate-700 min-w-0 truncate"><span class="font-black text-slate-500">[<?= htmlspecialchars($prod['codigo']) ?>]</span> <?= htmlspecialchars($prod['descricao']) ?></span>
-                            <span class="text-base font-black text-slate-900 shrink-0"><?= number_format($prod['quantidade_planejada'], 0, ',', '.') ?> <span class="text-xs font-bold text-slate-400">un</span></span>
+                            <span class="text-base font-black text-slate-900 shrink-0">
+                                <?php if ((int)($prod['quantidade_apontada'] ?? 0) > 0): ?>
+                                    <span class="text-amber-600"><?= number_format($prod['quantidade_apontada'], 0, ',', '.') ?></span>/<?= number_format($prod['quantidade_planejada'], 0, ',', '.') ?> <span class="text-xs font-bold text-slate-400">un</span>
+                                <?php else: ?>
+                                    <?= number_format($prod['quantidade_planejada'], 0, ',', '.') ?> <span class="text-xs font-bold text-slate-400">un</span>
+                                <?php endif; ?>
+                            </span>
                         </div>
                     <?php endforeach; ?>
                 </div>

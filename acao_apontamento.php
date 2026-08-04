@@ -133,9 +133,60 @@ try {
     }
 
     // =======================================================
-    // AÇÃO 4: FINALIZAR TURNO E CALCULAR OEE (STOP)
+    // AÇÃO 3B: TROCAR DE OP (OP reprovada/interrompida no meio
+    // do turno -- fecha o apontamento SEM contar pro OEE, sem
+    // exigir produção/perdas, e devolve a OP pra fila)
     // =======================================================
-    elseif ($acao === 'finalizar') {
+    elseif ($acao === 'trocar_op') {
+        $apontamento_id = $_POST['apontamento_id'];
+        $op_id = $_POST['op_id'];
+        $motivo_troca = trim($_POST['motivo_troca'] ?? '');
+        $agora = date('Y-m-d H:i:s');
+
+        // Trava de segurança do servidor: mesma regra do formulário (10
+        // caracteres mínimo) -- nunca confia só na validação do HTML.
+        if (mb_strlen($motivo_troca) < 10) {
+            throw new Exception("Descreva o motivo da troca com pelo menos 10 caracteres.");
+        }
+
+        // Busca nome da OP + quem programou, pra notificar
+        $stmt_op_troca = $pdo->prepare("SELECT op_sistema, criador_id FROM ordens_producao WHERE id = ?");
+        $stmt_op_troca->execute([$op_id]);
+        $dados_op_troca = $stmt_op_troca->fetch(PDO::FETCH_ASSOC);
+
+        // Fecha o apontamento como INTERROMPIDO -- hora_fim marcada,
+        // mas SEM oee_geral (fica NULL), então as médias de OEE já
+        // ignoram esse registro automaticamente (AVG() do MySQL pula
+        // NULL, e os relatórios já filtram "WHERE oee_geral > 0").
+        $pdo->prepare("UPDATE apontamentos SET hora_fim = ?, situacao = 'INTERROMPIDO', motivo_interrupcao = ? WHERE id = ?")
+            ->execute([$agora, $motivo_troca, $apontamento_id]);
+
+        // A OP volta pra fila -- mesmo status de "pronta pra começar"
+        // que ela já tinha antes de ser selecionada. O que já tiver
+        // sido produzido nesse turno interrompido (se algo foi salvo
+        // antes -- não é o caso aqui, "trocar" não pede produção) não
+        // se perde, porque não mexemos em quantidade_apontada aqui.
+        $pdo->prepare("UPDATE ordens_producao SET status = 'AGUARDANDO INICIO' WHERE id = ?")->execute([$op_id]);
+
+        if (!empty($dados_op_troca['criador_id'])) {
+            $nome_linha_troca = strtoupper($_SESSION['nome'] ?? "linha {$linha_id}");
+            $msg_troca = "OP {$dados_op_troca['op_sistema']} foi trocada/interrompida na linha {$nome_linha_troca}. Motivo: {$motivo_troca}";
+            notificar_usuario($pdo, (int)$dados_op_troca['criador_id'], (int)$op_id, 'OP_INTERROMPIDA', $msg_troca);
+            notificar_setor($pdo, 'ADMIN', (int)$op_id, 'OP_INTERROMPIDA', $msg_troca);
+        }
+
+        $msg = "OP trocada. Ela voltou pra fila e você já pode escolher outra.";
+    }
+
+    // =======================================================
+    // AÇÃO 4: FINALIZAR TURNO (a OP está PRONTA) *OU*
+    // AÇÃO 4B: ENCERRAR O DIA (a OP CONTINUA amanhã) --
+    // são ações distintas que o operador escolhe explicitamente, mas
+    // compartilham o mesmo trabalho de salvar produção/perdas e
+    // calcular o OEE do turno. O que muda entre elas é só o status
+    // final da OP e a notificação.
+    // =======================================================
+    elseif ($acao === 'finalizar' || $acao === 'encerrar_dia') {
         $apontamento_id = $_POST['apontamento_id'];
         $op_id = $_POST['op_id'];
         $agora_str = date('Y-m-d H:i:s');
@@ -174,8 +225,20 @@ try {
             }
         }
 
-        // 4. ATUALIZA OP PARA VERDE (FINALIZADA) -- SEM acento, igual ao enum real.
-        $pdo->prepare("UPDATE ordens_producao SET status = 'PRODUCAO FINALIZADA' WHERE id = ?")->execute([$op_id]);
+        // 4. Status final da OP -- é aqui que as duas ações se separam:
+        //    - "finalizar": o operador está dizendo que a OP terminou.
+        //      Vira PRODUCAO FINALIZADA sempre (mesmo que não tenha
+        //      batido 100% -- o front já confirma isso com o operador
+        //      antes de mandar, então quando chega aqui é intencional).
+        //    - "encerrar_dia": o operador está dizendo explicitamente
+        //      que NÃO terminou e quer continuar amanhã. Volta pra
+        //      AGUARDANDO INICIO sempre, independente da quantidade.
+        if ($acao === 'finalizar') {
+            $status_final_op = 'PRODUCAO FINALIZADA';
+        } else {
+            $status_final_op = 'AGUARDANDO INICIO';
+        }
+        $pdo->prepare("UPDATE ordens_producao SET status = ? WHERE id = ?")->execute([$status_final_op, $op_id]);
 
         // ================== CÁLCULO DE OEE ==================
         $stmt_ap = $pdo->prepare("SELECT hora_inicio FROM apontamentos WHERE id = ?");
@@ -217,12 +280,26 @@ try {
             ->execute([round($disponibilidade, 2), round($performance, 2), round($qualidade, 2), round($oee_geral, 2), $apontamento_id]);
 
         if (!empty($dados_op_final['criador_id'])) {
-            $msg_final = "OP {$dados_op_final['op_sistema']} finalizada. OEE geral: " . round($oee_geral, 1) . "%.";
-            notificar_usuario($pdo, (int)$dados_op_final['criador_id'], (int)$op_id, 'OP_PRODUZIDA', $msg_final);
-            notificar_setor($pdo, 'ADMIN', (int)$op_id, 'OP_PRODUZIDA', $msg_final);
+            if ($acao === 'finalizar') {
+                $msg_final = "OP {$dados_op_final['op_sistema']} finalizada. OEE geral: " . round($oee_geral, 1) . "%.";
+                $tipo_evento_final = 'OP_PRODUZIDA';
+            } else {
+                // Soma quanto ainda falta, pra avisar exatamente quanto
+                // resta -- o que rodou hoje conta hoje, o resto fica
+                // pra quando alguém retomar essa OP.
+                $stmt_restante = $pdo->prepare("SELECT SUM(GREATEST(quantidade_planejada - quantidade_apontada, 0)) FROM op_produtos WHERE op_id = ?");
+                $stmt_restante->execute([$op_id]);
+                $qtd_restante = (int)$stmt_restante->fetchColumn();
+                $msg_final = "OP {$dados_op_final['op_sistema']} encerrada por hoje (OEE do turno: " . round($oee_geral, 1) . "%). Restam " . number_format($qtd_restante, 0, ',', '.') . " unidade(s) -- ela volta pra fila pra ser retomada.";
+                $tipo_evento_final = 'OP_PRODUCAO_PARCIAL';
+            }
+            notificar_usuario($pdo, (int)$dados_op_final['criador_id'], (int)$op_id, $tipo_evento_final, $msg_final);
+            notificar_setor($pdo, 'ADMIN', (int)$op_id, $tipo_evento_final, $msg_final);
         }
 
-        $msg = "Turno Finalizado! OEE processado com sucesso.";
+        $msg = ($acao === 'finalizar')
+            ? "Turno Finalizado! OEE processado com sucesso."
+            : "Dia encerrado. A OP volta pra fila com o que ainda falta, pra ser retomada depois.";
     }
 
     $pdo->commit();
